@@ -42,3 +42,25 @@ def PlotNFeatSeries(Data, Cols=3, Height=1.6, Width=5.0, Titles=None):
     Fig.tight_layout()
 
     return Fig, Axes[:n]
+
+
+def PlotLossCurves(History, LogY=True, Height=3.2, Width=6.0):
+    """Plot every loss series in a history dict on one axes."""
+    Fig, Ax = plt.subplots(figsize=(Width, Height), dpi=300)
+
+    for Name, Values in History.items():
+        Ax.plot(np.arange(1, len(Values) + 1), Values, linewidth=1.0, label=Name)
+
+    if LogY:
+        Ax.set_yscale('log')
+    Ax.set_xlabel('Epoch', fontsize=8)
+    Ax.set_ylabel('Loss', fontsize=8)
+    Ax.tick_params(labelsize=7)
+    Ax.margins(x=0)
+    Ax.grid(True, linewidth=0.4, alpha=0.4)
+    Ax.set_axisbelow(True)
+    Ax.legend(fontsize=7)
+
+    Fig.tight_layout()
+
+    return Fig, Ax
