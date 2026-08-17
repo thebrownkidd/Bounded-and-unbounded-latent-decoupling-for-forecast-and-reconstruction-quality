@@ -8,6 +8,8 @@ than a hyperparameter.
 Dependencies: numpy, scipy.
 """
 
+import os
+
 import numpy as np
 from scipy.integrate import solve_ivp
 
@@ -93,7 +95,23 @@ if __name__ == "__main__":
     print(f"train {d['train'].shape}  val {d['val'].shape}  test {d['test'].shape}")
     print(f"windows X {X.shape}  Y {Y.shape}")
     print(f"noise floor (MSE): {d['noise_floor'] ** 2:.5f}")
-
+    train = d["train"]
+    test = d["test"]
+    val = d["val"]
+    os.makedirs("Data", exist_ok=True)
+    np.savez("Data/LorenzLift.npz", train=train, test=test, val=val, clean=d["clean"], states=d["states"])
+    #also save a readme file with the parameters used to generate the dataset
+    with open("Data/LorenzLift_README.txt", "w") as f:
+        f.write(f"n_steps: {20000}\n")
+        f.write(f"n_obs: {30}\n")
+        f.write(f"noise: {0.05}\n")
+        f.write(f"dt: {0.01}\n")
+        f.write(f"train_frac: {0.7}\n")
+        f.write(f"val_frac: {0.15}\n")
+        f.write(f"test_frac: {0.15}\n")
+        f.write(f"lookback: {64}\n")
+        f.write(f"horizon: {50}\n")
+    
     # Sanity check: the observations really do lie on a 3-d manifold.
     # Linear PCA will NOT show a clean cut at 3 -- the lift is nonlinear,
     # so 3 intrinsic dimensions smear across many linear components.
