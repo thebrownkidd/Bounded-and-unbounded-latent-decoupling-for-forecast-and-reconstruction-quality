@@ -2,17 +2,24 @@ import torch.nn as nn
 
 
 class LatentMapping(nn.Module):
-    """f : h_t in R^n  ->  b_t in R^k   (k << n), the unbounded forecast latent."""
+    """m : b_t in R^k  ->  C_t in [0, 1]^(a x b), the bounded latent.
 
-    def __init__(self, n, k, hidden=(128, 64), activation=nn.GELU):
+    Replaces the composition r(f^-1(b_t)): the inference path is
+    h_t -> b_t -> C_t, with no direct h_t -> C_t route.
+    """
+
+    def __init__(self, k, a, b, hidden=(64, 128), activation=nn.GELU):
         super().__init__()
+        self.a = a
+        self.b = b
         layers = []
-        dims = [n] + list(hidden)
+        dims = [k] + list(hidden)
         for i in range(len(dims) - 1):
             layers.append(nn.Linear(dims[i], dims[i + 1]))
             layers.append(activation())
-        layers.append(nn.Linear(dims[-1], k))
+        layers.append(nn.Linear(dims[-1], a * b))
+        layers.append(nn.Sigmoid())
         self.net = nn.Sequential(*layers)
 
-    def forward(self, h):
-        return self.net(h)
+    def forward(self, bt):
+        return self.net(bt).view(-1, self.a, self.b)

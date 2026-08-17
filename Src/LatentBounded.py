@@ -2,7 +2,11 @@ import torch.nn as nn
 
 
 class LatentBounded(nn.Module):
-    """r : h_t in R^n  ->  C_t in [0, 1]^(a x b), the bounded latent."""
+    """r : h_t in R^n  ->  C_t in [0, 1]^(a x b), the bounded latent.
+
+    Training-only teacher: it supplies the target for m(b_t). At inference the
+    bounded latent comes from m(b_t) instead, so this path is never run.
+    """
 
     def __init__(self, n, a, b, hidden=(128, 128), activation=nn.GELU):
         super().__init__()

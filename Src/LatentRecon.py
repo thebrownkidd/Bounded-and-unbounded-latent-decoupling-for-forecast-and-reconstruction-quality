@@ -2,21 +2,17 @@ import torch.nn as nn
 
 
 class LatentRecon(nn.Module):
-    """f^{-1} : b_t in R^k  ->  h_t in R^n.
+    """f : h_t in R^n  ->  b_t in R^k   (k << n), the unbounded forecast latent."""
 
-    Learned inverse of LatentMapping; train with a cycle loss
-    ||f^{-1}(f(h)) - h|| to enforce invertibility of f.
-    """
-
-    def __init__(self, k, n, hidden=(64, 128), activation=nn.GELU):
+    def __init__(self, n, k, hidden=(128, 64), activation=nn.GELU):
         super().__init__()
         layers = []
-        dims = [k] + list(hidden)
+        dims = [n] + list(hidden)
         for i in range(len(dims) - 1):
             layers.append(nn.Linear(dims[i], dims[i + 1]))
             layers.append(activation())
-        layers.append(nn.Linear(dims[-1], n))
+        layers.append(nn.Linear(dims[-1], k))
         self.net = nn.Sequential(*layers)
 
-    def forward(self, b):
-        return self.net(b)
+    def forward(self, h):
+        return self.net(h)
