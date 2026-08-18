@@ -86,6 +86,27 @@ def MakeWindows(series, warm, horizon, starts):
     return W, F
 
 
+def MakeSeriesWindows(series_stack, length, stride=1, max_per_series=None):
+    """(S, T, C) independent series -> (N, length, C) windows.
+
+    Every window comes from a single series and never crosses a boundary --
+    concatenating a pool of series first and sliding a window over the result
+    would splice the tail of one trajectory onto the head of the next. Used for
+    training windows, PINN's (t-1, t, t+1) triples (length=3, stride=1), and
+    validation windows, whenever training pools more than one series.
+
+    `max_per_series` caps how many windows are taken from each series (from the
+    start), for validation-sized subsamples that should not scale with S.
+    """
+    series_stack = np.asarray(series_stack)
+    S, T, C = series_stack.shape
+    starts = np.arange(0, T - length + 1, stride)
+    if max_per_series is not None:
+        starts = starts[:max_per_series]
+    windows = np.stack([series_stack[:, s:s + length] for s in starts], axis=1)
+    return windows.reshape(-1, length, C)          # (S, W, length, C) -> (S*W, length, C)
+
+
 def EvalWindowsFromTrajectories(trajs, warm, horizon, per_traj=1, seed=0):
     """(N, T, n) independent trajectories -> stacked warm/future windows.
 

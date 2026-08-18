@@ -129,6 +129,21 @@ def lift_params(states, n_obs=30, noise=0.05, seed=0, hidden=16, train_frac=0.7)
             "clean": clean, "train": (obs[:i] - obs_mu) / obs_sd}
 
 
+def lift_raw_with(states, params, rng):
+    """As lift_with, but stops before the final obs_mu/obs_sd standardisation.
+
+    Everything except the last rescale comes from `params`, none from `states`.
+    Exists so a caller can pool several trajectories' TRAIN portions and fit one
+    shared obs_mu/obs_sd across all of them, rather than being stuck with the
+    single-trajectory scale baked into `params` by lift_params -- see
+    make_multi_series_dataset.
+    """
+    s = (states - params["state_mu"]) / params["state_sd"]
+    clean = (np.tanh(s @ params["W1"]) @ params["W2"] - params["clean_mu"]) / params["clean_sd"]
+    obs = clean + rng.normal(0, params["noise"], size=clean.shape)
+    return obs, clean
+
+
 def lift_with(states, params, rng):
     """Apply an already-fixed lift to new states. Returns (obs, clean).
 
@@ -136,9 +151,7 @@ def lift_with(states, params, rng):
     standardised by its own statistics would sit in a subtly different space and
     quietly invalidate the comparison.
     """
-    s = (states - params["state_mu"]) / params["state_sd"]
-    clean = (np.tanh(s @ params["W1"]) @ params["W2"] - params["clean_mu"]) / params["clean_sd"]
-    obs = clean + rng.normal(0, params["noise"], size=clean.shape)
+    obs, clean = lift_raw_with(states, params, rng)
     return (obs - params["obs_mu"]) / params["obs_sd"], clean
 
 
@@ -159,6 +172,101 @@ def make_eval_trajectories(params, n_traj=32, n_steps=12000, dt=0.01,
         obs.append(o)
         states.append(st)
     return np.stack(obs), np.stack(states)
+
+
+def make_multi_series_dataset(n_series=8, n_steps=20000, n_obs=30, noise=0.05, dt=0.01,
+                              seed=0, train_frac=0.7, val_frac=0.15,
+                              n_holdout=32, holdout_steps=12000, holdout_burn_in=2000,
+                              hidden=16):
+    """Several independent trajectories, sharing one frozen lift.
+
+    Two pools, both in the same observation space:
+
+    * `n_series` training-pool trajectories. EACH gets the same chronological
+      70/15/15 split as the single-series pipeline; their train/val/test chunks
+      are meant to be pooled by the caller (concatenated, per split). The final
+      obs_mu/obs_sd come from the POOLED train chunks across all of them, not
+      from any one trajectory -- the direct generalisation of "standardise using
+      TRAIN statistics only" to more than one series.
+    * `n_holdout` further trajectories, from different initial conditions and
+      never chronologically split at all -- purely for testing on series the
+      model has not seen in any form, matching the existing LorenzEval.npz role.
+
+    Returns a dict: "train"/"val"/"test" (n_series, T_i, n_obs), "clean"/"states"
+    (n_series, n_steps, ...), "holdout_obs"/"holdout_states"
+    (n_holdout, holdout_steps, ...), plus obs_mu, obs_sd, noise_floor.
+    """
+    rng = np.random.default_rng(seed)
+
+    # One trajectory anchors the frozen nonlinearity (W1, W2) and the state/clean
+    # standardisation -- lift_params replays exactly what lift() would have done
+    # for this trajectory alone. Its own obs_mu/obs_sd are NOT used below.
+    anchor_states = lorenz63(n_steps=n_steps, dt=dt, seed=seed)
+    params = lift_params(anchor_states, n_obs=n_obs, noise=noise, seed=seed,
+                         hidden=hidden, train_frac=train_frac)
+
+    ics = rng.uniform(-15.0, 15.0, size=(n_series, 3))
+    pool_states = [lorenz63(n_steps=n_steps, dt=dt, x0=tuple(x0), burn_in=1000, seed=seed)
+                  for x0 in ics]
+
+    obs_rng = np.random.default_rng(seed + 1)
+    pool_raw = [lift_raw_with(st, params, obs_rng) for st in pool_states]   # [(obs, clean), ...]
+
+    i, j = int(n_steps * train_frac), int(n_steps * (train_frac + val_frac))
+
+    # Pooled TRAIN-only scale, across every training-pool trajectory at once.
+    pooled_train_raw = np.concatenate([raw[:i] for raw, _ in pool_raw])
+    obs_mu, obs_sd = pooled_train_raw.mean(0), pooled_train_raw.std(0)
+
+    def scale(a):
+        return (a - obs_mu) / obs_sd
+
+    train = np.stack([scale(raw[:i]) for raw, _ in pool_raw])
+    val = np.stack([scale(raw[i:j]) for raw, _ in pool_raw])
+    test = np.stack([scale(raw[j:]) for raw, _ in pool_raw])
+    clean = np.stack([c for _, c in pool_raw])
+    states = np.stack(pool_states)
+
+    # Held-out trajectories: never chronologically split, purely for test.
+    holdout_rng = np.random.default_rng(seed + 2)
+    ho_states, ho_obs = [], []
+    for _ in range(n_holdout):
+        x0 = tuple(holdout_rng.uniform(-15.0, 15.0, size=3))
+        st = lorenz63(n_steps=holdout_steps, dt=dt, x0=x0, burn_in=holdout_burn_in)
+        raw_obs, _ = lift_raw_with(st, params, holdout_rng)
+        ho_obs.append(scale(raw_obs))
+        ho_states.append(st)
+
+    return {"train": train, "val": val, "test": test, "clean": clean, "states": states,
+           "holdout_obs": np.stack(ho_obs), "holdout_states": np.stack(ho_states),
+           "obs_mu": obs_mu, "obs_sd": obs_sd, "noise_floor": noise}
+
+
+def save_multi_series_dataset(path="Data/LorenzLiftMulti.npz",
+                              readme_path="Data/LorenzLiftMulti_README.txt",
+                              **kwargs):
+    """make_multi_series_dataset(**kwargs) -> saved .npz + README. Returns the dict."""
+    d = make_multi_series_dataset(**kwargs)
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    np.savez(path, train=d["train"], val=d["val"], test=d["test"],
+             clean=d["clean"], states=d["states"],
+             holdout_obs=d["holdout_obs"], holdout_states=d["holdout_states"],
+             obs_mu=d["obs_mu"], obs_sd=d["obs_sd"])
+    with open(readme_path, "w") as f:
+        f.write(f"n_series (training pool): {d['train'].shape[0]}\n")
+        f.write(f"per-series steps: train {d['train'].shape[1]}  "
+               f"val {d['val'].shape[1]}  test {d['test'].shape[1]}\n")
+        f.write(f"n_holdout (never trained on, no temporal split): "
+               f"{d['holdout_obs'].shape[0]}\n")
+        f.write(f"holdout steps: {d['holdout_obs'].shape[1]}\n")
+        f.write(f"n_obs: {d['train'].shape[-1]}\n")
+        f.write(f"noise_floor (MSE): {d['noise_floor'] ** 2:.5f}\n")
+        f.write("obs_mu/obs_sd: fit on the POOLED train chunk across every "
+               "training-pool series.\n")
+        f.write("Same frozen lift (W1, W2) as LorenzLift.npz would use at the "
+               "same seed, so a single-series model and a multi-series model "
+               "are NOT directly comparable on raw MSE -- obs_mu/obs_sd differ.\n")
+    return d
 
 
 if __name__ == "__main__":
