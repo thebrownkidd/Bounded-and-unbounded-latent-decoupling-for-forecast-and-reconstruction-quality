@@ -414,7 +414,8 @@ leaves an obvious question: does the architecture's advantage survive contact wi
 orbit, or is it a property of that one trajectory?
 
 **The multi-series setup.** [LatentForecastComparisonMultiSeries.ipynb](Experimentation/LatentForecastComparisonMultiSeries.ipynb)
-mirrors the single-series notebook cell for cell, with two changes to the data:
+started as a cell-for-cell mirror of the single-series notebook and has since grown a fourth
+baseline (§5.4) and checkpointing (§6); the data side is unchanged:
 
 - **8 independent training-pool trajectories**, each individually split 70/15/15 exactly like the
   single-series run, then pooled. Windows never cross a trajectory boundary — a sliding window
@@ -430,55 +431,68 @@ per-channel standardisation is fit on the pooled 8-series training pool rather t
 so raw MSE is not directly comparable between the two experiments. The floor-relative ratios below
 are.
 
-### 5.1 The comparison reproduces — and the margin widens
+### 5.1 The comparison reproduces
 
 | | single series | 8-series pool |
 |---|---|---|
-| Recon NRMSE (Ours) | 0.0547 | **0.0510** |
-| VPT, Lyapunov times (Ours) | 0.526 | **0.649 ± 0.083** |
+| Recon NRMSE (Ours) | 0.0547 | **0.0515** |
+| VPT, Lyapunov times (Ours) | 0.526 | **0.571 ± 0.087** |
 | Best φ, VPT | 0.344 | 0.335 |
-| Divergence @ 5LT (Ours) | 5.7% | **4.2%** |
+| Divergence @ 5LT (Ours) | 5.7% | **3.1%** |
 | Divergence @ 5LT (every φ) | 100% | 100% |
-| Two-stage vs joint-trained VPT gap | 1.14× | **2.05×** |
-| $b_t \to$ true-state probe $R^2$ | [0.63, 0.42, 0.85] | **[0.90, 0.77, 0.89]** |
+| Two-stage vs joint-trained VPT gap | 1.14× | **1.70×** |
+| $b_t \to$ true-state probe $R^2$ | [0.63, 0.42, 0.85] | [0.68, 0.76, 0.72] |
 
 Same shape as §4: the φ frontier is flat regardless of how much data it gets — best VPT is 0.344
-with one series, 0.335 with eight, the same ceiling the single-series run found. Ours moved
-*further* above it, from 0.526 to 0.649 Lyapunov times, a 23% gain from more training diversity
-alone with nothing else changed. And the two-stage-vs-joint ablation gap nearly doubled — training
-end-to-end got *worse* at forecasting with more data (0.462 → 0.317 Lyapunov times) while
-two-stage training pulled further ahead, which is the opposite of what "the split was a fluke of
-one small dataset" would predict.
+with one series, 0.335 with eight, the same ceiling the single-series run found. Ours stays above
+it with more training diversity, and the two-stage-vs-joint ablation gap widens rather than
+shrinks — training end-to-end got *worse* at forecasting with more data (0.462 → 0.335 Lyapunov
+times) while two-stage training held its ground, which is the opposite of what "the split was a
+fluke of one small dataset" would predict.
 
-The unbounded latent's state-recovery also improved substantially — the affine probe from $b_t$
-to true $(x, y, z)$ went from explaining 42–85% of each coordinate's variance to 77–90%. One
-trajectory gives the encoder one orbit's worth of examples to learn that map from; eight
-independent ones generalise it.
+The state-recovery probe moved in mixed directions rather than uniformly up — two coordinates
+improved (0.63 → 0.68, 0.42 → 0.76), one fell (0.85 → 0.72). Both runs are a single seed for this
+particular probe, so read it as "still recovers the state reasonably well with more series," not
+as a clean monotonic trend.
 
 ### 5.2 Copying, on the pooled 8-series scale
 
 | model | copy error | how far above the floor |
 |---|---|---|
-| φ=0 (pure copier) | 0.00249 | 0.99× |
-| **Ours** | **0.00263** | **1.05×** |
-| φ=0.1 | 0.00275 | 1.10× |
-| φ=0.25 | 0.00290 | 1.16× |
-| φ=0.5 | 0.00316 | 1.26× |
-| PINN (rho=26) | 0.00340 | 1.35× |
-| PINN (true physics) | 0.00386 | 1.54× |
-| φ=0.75 | 0.00409 | 1.63× |
-| φ=0.9 | 0.00488 | 1.94× |
-| φ=1 | 0.00889 | 3.54× |
+| φ=0 (pure copier) | 0.00246 | **0.98×** |
+| φ=0.1 | 0.00263 | 1.05× |
+| **Ours** | **0.00268** | **1.07×** |
+| φ=0.25 | 0.00286 | 1.14× |
+| φ=0.5 | 0.00327 | 1.30× |
+| φ=0.75 | 0.00372 | 1.48× |
+| PINN (true physics) | 0.00388 | 1.55× |
+| PINN (rho=26) | 0.00424 | 1.69× |
+| φ=0.9 | 0.00480 | 1.91× |
+| AEGRU+sigmoid (D) | 0.00542 | 2.16× |
+| φ=1 | 0.00849 | 3.38× |
 
-Even closer to the pure copier than in the single-series run (1.05× the floor, against 1.23×
-before) — test $R^2$ = 0.9974, pooled across all 8 test splits.
+Close to the pure copier, as in the single-series run (1.07× the floor, against 1.23× before) —
+test $R^2$ = 0.9972, pooled across all 8 test splits.
+
+**φ=0 scores *below* the floor — 0.98×, and the highest $R^2$ in the table (0.9976).** Investigated
+by tracing the evaluation path rather than assumed: `Warm` (the 64 windows this table scores) is
+built once from `HoldoutObs` and reused for all 11 rows, so a leak in the data or the eval code
+would lift every row, not one. It doesn't — only φ=0 crosses under. The likely cause is architectural:
+`JointAEGRU`'s shared latent is 16-dimensional (`Comp/JointAEGRU.py:33`) against a true intrinsic
+dimensionality of 3, and φ=0 is the only setting where no forecast term ever regularises that
+latent toward simplicity — free to spend all 16 dimensions purely on reconstruction, it can use the
+redundancy across 30 correlated, independently-noised channels to denoise slightly past the naive
+per-channel floor. This did not happen in the single-series run (φ=0 was 1.10× there); it appears
+only once the training pool is diverse enough to recover the manifold this well, which tracks the
+§5.1 probe-quality story. Not fully closed: the decisive test is re-running φ=0 with `latent=3`
+to see if the effect disappears.
 
 ### 5.3 One result that went the other way: the physics oracle
 
 | | single series | 8-series pool |
 |---|---|---|
-| PINN (true physics), VPT | 0.233 | **0.121** |
-| PINN (true physics), Wasserstein @ 50LT | 0.082 | **1.496** |
+| PINN (true physics), VPT | 0.233 | **0.130** |
+| PINN (true physics), Wasserstein @ 50LT | 0.082 | **1.538** |
 | PINN (ρ=26), VPT | 0.027 | **0.009** |
 | PINN (ρ=26), divergence @ 5LT | 4.7% | **100%** |
 
@@ -486,16 +500,29 @@ The model handed the exact governing equations got meaningfully worse with more 
 diversity, and the misspecified control effectively collapsed. Both PINN configurations run a
 single seed here, so this could be one unlucky draw rather than a systematic effect of pooling —
 recorded as an open question, not explained away. Ours stays the best long-horizon tracker either
-way (Wasserstein 0.171 against the PINN's 1.496, both far below every φ setting's 100+).
+way (Wasserstein 0.132 against the PINN's 1.538, both far below every φ setting's 100+).
 
-### 5.4 A fourth baseline, added but not yet run: bounding without splitting
+### 5.4 A fourth baseline: bounding without splitting
 
-The comparison notebook now also builds `JointAEGRUSigmoid` (`Comp/JointAEGRUSigmoid.py`) — the
-weighted-loss AE+GRU with a sigmoid on its *shared* latent, kept bounded through an arbitrarily
-long rollout by the same residual-logit-space trick `LatentMappingDynamic` uses. It isolates the
-one variable the headline result could still be confounded by: is boundedness alone worth
-something, independent of splitting the latent in two? Wired into every comparison table and the
-Pareto plot as **Model D**, trained at a single `phi = 0.5`. Numbers pending the next full run.
+`JointAEGRUSigmoid` (`Comp/JointAEGRUSigmoid.py`) is the weighted-loss AE+GRU with a sigmoid on
+its *shared* latent, kept bounded through an arbitrarily long rollout by the same residual-logit-
+space trick `LatentMappingDynamic` uses. It isolates the one variable the headline result could
+still be confounded by: is boundedness alone worth something, independent of splitting the latent
+in two? Trained at a single `phi = 0.5`, same footing as the PINN's single oracle run.
+
+| | Ours | AEGRU+sigmoid (D) | every φ setting |
+|---|---|---|---|
+| Copy error, × floor | 1.07× | 2.16× | 1.05×–3.38× |
+| VPT, Lyapunov times | 0.571 | 0.344 | 0.317–0.335 |
+| Divergence @ 5LT | 3.1% | **0%** | 100% |
+
+The answer is no, not on its own — Model D copies worse than every φ setting except φ=1 and
+predicts no further than the flat φ ceiling, so bounding a single shared latent buys neither of
+Ours's headline advantages. But it does buy the *stability* half outright: 0% divergence, tied
+with Ours and against 100% for every unbounded weighted-loss setting. That's the cleanest
+statement of what splitting the latent adds on top of bounding it: bounding alone stops the
+blow-ups; separating the carriers is what additionally protects reconstruction and extends the
+forecast horizon.
 
 ---
 
@@ -548,10 +575,14 @@ file (or the whole directory) to force that model to retrain.
 - **Seeds are uneven.** Ours and the PINN run 3 seeds in both experiments; the φ sweep and Model D
   run 1 each, so a `VPT std` of `0.0000` on those rows means $n=1$, not stability. §5.3's PINN
   regression under pooling is reported on single seeds and could be seed noise.
-- **Absolute horizons are short.** 0.526–0.649 Lyapunov times is 58–72 steps. Chaos is hard;
+- **Absolute horizons are short.** 0.526–0.571 Lyapunov times is 58–63 steps. Chaos is hard;
   everyone here fails eventually. The claim is comparative.
 - **The φ baseline is a construction**, not a named published method — the weighted-loss
   autoencoder+GRU in its plainest form, and Model D (§5.4) is the same construction with a bounded
   latent, not a published method either.
-- **Model D has no numbers yet.** It is wired into every table and the Pareto plot but has not
-  been run as of this revision.
+- **φ=0 beating the noise floor (§5.2) is a live, single-seed finding.** The evaluation-path
+  argument against a leak is solid; the "spare latent capacity" explanation is the leading
+  hypothesis, not yet confirmed by the `latent=3` control that would settle it.
+- **Every number here is one run.** Re-running the same notebook end to end changes VPT, the
+  ablation gap and the probe $R^2$ by seed and wall-clock variance alone — compare the two full
+  extractions of this experiment in the git history if you want a feel for the spread.
