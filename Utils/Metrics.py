@@ -88,8 +88,8 @@ def DivergenceRate(Pred, lo, hi):
 def BoundViolation(C, lo=0.0, hi=1.0):
     """Fraction of bounded-latent entries outside [lo, hi].
 
-    For the residual-sigmoid LatentMappingDynamic this is 0 by construction,
-    so any non-zero value is a bug rather than a result.
+    LatentMapping ends in a sigmoid, so this is 0 by construction and any
+    non-zero value is a bug rather than a result.
     """
     C = np.asarray(C)
     return float(((C < lo) | (C > hi)).mean())
