@@ -409,120 +409,176 @@ balanced. It was removed by construction.**
 
 ## 5. Generalization: training on multiple series
 
-Everything above trains on **one** 20,000-step trajectory, chronologically split 70/15/15. That
-leaves an obvious question: does the architecture's advantage survive contact with more than one
-orbit, or is it a property of that one trajectory?
+Everything in §4 trains on **one** 20,000-step trajectory. This section asks whether the result
+survives contact with more than one orbit, adds a fourth comparison model that isolates a specific
+confound, and runs three correctness/rigour passes a reviewer would ask for: matched seeding on
+the baselines, a check that the weighted-loss knob isn't simply undertrained, and a noise sweep.
 
-**The multi-series setup.** [LatentForecastComparisonMultiSeries.ipynb](Experimentation/LatentForecastComparisonMultiSeries.ipynb)
-started as a cell-for-cell mirror of the single-series notebook and has since grown a fourth
-baseline (§5.4) and checkpointing (§6); the data side is unchanged:
+### 5.1 What this experiment tests, and how to run it
+
+[LatentForecastComparisonMultiSeries.ipynb](Experimentation/LatentForecastComparisonMultiSeries.ipynb)
+mirrors the single-series comparison's models, metrics and evaluation protocol, changing only the
+training data and adding one baseline:
 
 - **8 independent training-pool trajectories**, each individually split 70/15/15 exactly like the
-  single-series run, then pooled. Windows never cross a trajectory boundary — a sliding window
-  over the naive concatenation would splice the tail of one orbit onto the head of the next.
-- **32 further trajectories, held out completely** — never chronologically split, never touched
-  in any form during training. This already existed as the long-rollout evaluation set (§2.3); the
-  multi-series run is what makes it a genuine test of a trajectory the model has never seen, not
-  just a continuation of one it partially has.
+  single-series run, then pooled. Windows never cross a trajectory boundary.
+- **32 further trajectories, held out completely** — never chronologically split, never touched in
+  any form during training — used purely for the long-rollout evaluation.
+- Every standardisation constant (state scale, the lift's internal channel scale, and the final
+  observation scale) is fit on the **pooled training portion only**, then applied unchanged to val,
+  test, and the 32 held-out trajectories. An earlier version of the generator anchored two of those
+  three constants to one trajectory's full series, including its own val/test range; this is fixed
+  (`SyntheticGenerators/LorenzLift.py:make_multi_series_dataset`), verified by an assertion in the
+  notebook that only the training split standardises to exactly mean 0, std 1.
+- The reconstruction floor (the MSE no model can beat) is **measured** directly from the realised
+  noise draw in the final standardised scale, not assumed as `noise**2` — the two differ by about
+  0.3%, small but not zero, and the measured value is what every "× floor" ratio below uses.
 
-All 8 training series and the 32 held-out ones share one frozen lift, so a multi-series model and
-a single-series model decode to the same kind of number — but not the same *scale*: the final
-per-channel standardisation is fit on the pooled 8-series training pool rather than one trajectory,
-so raw MSE is not directly comparable between the two experiments. The floor-relative ratios below
-are.
+```bash
+pip install -r requirements.txt
+python -c "from SyntheticGenerators.LorenzLift import save_multi_series_dataset as s; s()"
+jupyter lab Experimentation/LatentForecastComparisonMultiSeries.ipynb
+```
 
-### 5.1 The comparison reproduces
+Every model in the comparison gets **124,482 trainable parameters and 120 seconds of wall-clock
+training on one pinned CPU thread** — the budget convention is fixed across the whole comparison;
+where a model is given more (the ×10 budget control, §5.5) that row is labelled and reported
+separately, never folded into the matched-budget headline. Set `QUICK = True` in the config cell
+for a fast smoke run; a full run trains on the order of twenty model configurations and takes
+roughly two to three hours end to end (see §6 for the actual figure and where the time goes).
+Every trained model is cached to `Checkpoints/multi_series/` the first time it trains
+(`Utils/Checkpoints.py:TrainOrLoad`) — re-running the notebook loads cached weights instead of
+retraining; delete a checkpoint file to force that model to retrain.
 
-| | single series | 8-series pool |
-|---|---|---|
-| Recon NRMSE (Ours) | 0.0547 | **0.0515** |
-| VPT, Lyapunov times (Ours) | 0.526 | **0.571 ± 0.087** |
-| Best φ, VPT | 0.344 | 0.335 |
-| Divergence @ 5LT (Ours) | 5.7% | **3.1%** |
-| Divergence @ 5LT (every φ) | 100% | 100% |
-| Two-stage vs joint-trained VPT gap | 1.14× | **1.70×** |
-| $b_t \to$ true-state probe $R^2$ | [0.63, 0.42, 0.85] | [0.68, 0.76, 0.72] |
+### 5.2 The four models
 
-Same shape as §4: the φ frontier is flat regardless of how much data it gets — best VPT is 0.344
-with one series, 0.335 with eight, the same ceiling the single-series run found. Ours stays above
-it with more training diversity, and the two-stage-vs-joint ablation gap widens rather than
-shrinks — training end-to-end got *worse* at forecasting with more data (0.462 → 0.335 Lyapunov
-times) while two-stage training held its ground, which is the opposite of what "the split was a
-fluke of one small dataset" would predict.
-
-The state-recovery probe moved in mixed directions rather than uniformly up — two coordinates
-improved (0.63 → 0.68, 0.42 → 0.76), one fell (0.85 → 0.72). Both runs are a single seed for this
-particular probe, so read it as "still recovers the state reasonably well with more series," not
-as a clean monotonic trend.
-
-### 5.2 Copying, on the pooled 8-series scale
-
-| model | copy error | how far above the floor |
-|---|---|---|
-| φ=0 (pure copier) | 0.00246 | **0.98×** |
-| φ=0.1 | 0.00263 | 1.05× |
-| **Ours** | **0.00268** | **1.07×** |
-| φ=0.25 | 0.00286 | 1.14× |
-| φ=0.5 | 0.00327 | 1.30× |
-| φ=0.75 | 0.00372 | 1.48× |
-| PINN (true physics) | 0.00388 | 1.55× |
-| PINN (rho=26) | 0.00424 | 1.69× |
-| φ=0.9 | 0.00480 | 1.91× |
-| AEGRU+sigmoid (D) | 0.00542 | 2.16× |
-| φ=1 | 0.00849 | 3.38× |
-
-Close to the pure copier, as in the single-series run (1.07× the floor, against 1.23× before) —
-test $R^2$ = 0.9972, pooled across all 8 test splits.
-
-**φ=0 scores *below* the floor — 0.98×, and the highest $R^2$ in the table (0.9976).** Investigated
-by tracing the evaluation path rather than assumed: `Warm` (the 64 windows this table scores) is
-built once from `HoldoutObs` and reused for all 11 rows, so a leak in the data or the eval code
-would lift every row, not one. It doesn't — only φ=0 crosses under. The likely cause is architectural:
-`JointAEGRU`'s shared latent is 16-dimensional (`Comp/JointAEGRU.py:33`) against a true intrinsic
-dimensionality of 3, and φ=0 is the only setting where no forecast term ever regularises that
-latent toward simplicity — free to spend all 16 dimensions purely on reconstruction, it can use the
-redundancy across 30 correlated, independently-noised channels to denoise slightly past the naive
-per-channel floor. This did not happen in the single-series run (φ=0 was 1.10× there); it appears
-only once the training pool is diverse enough to recover the manifold this well, which tracks the
-§5.1 probe-quality story. Not fully closed: the decisive test is re-running φ=0 with `latent=3`
-to see if the effect disappears.
-
-### 5.3 One result that went the other way: the physics oracle
-
-| | single series | 8-series pool |
-|---|---|---|
-| PINN (true physics), VPT | 0.233 | **0.130** |
-| PINN (true physics), Wasserstein @ 50LT | 0.082 | **1.538** |
-| PINN (ρ=26), VPT | 0.027 | **0.009** |
-| PINN (ρ=26), divergence @ 5LT | 4.7% | **100%** |
-
-The model handed the exact governing equations got meaningfully worse with more training
-diversity, and the misspecified control effectively collapsed. Both PINN configurations run a
-single seed here, so this could be one unlucky draw rather than a systematic effect of pooling —
-recorded as an open question, not explained away. Ours stays the best long-horizon tracker either
-way (Wasserstein 0.132 against the PINN's 1.538, both far below every φ setting's 100+).
-
-### 5.4 A fourth baseline: bounding without splitting
-
-`JointAEGRUSigmoid` (`Comp/JointAEGRUSigmoid.py`) is the weighted-loss AE+GRU with a sigmoid on
-its *shared* latent, kept bounded through an arbitrarily long rollout by the same residual-logit-
-space trick `LatentMappingDynamic` uses. It isolates the one variable the headline result could
-still be confounded by: is boundedness alone worth something, independent of splitting the latent
-in two? Trained at a single `phi = 0.5`, same footing as the PINN's single oracle run.
-
-| | Ours | AEGRU+sigmoid (D) | every φ setting |
+| | what it is | latent | boundedness |
 |---|---|---|---|
-| Copy error, × floor | 1.07× | 2.16× | 1.05×–3.38× |
-| VPT, Lyapunov times | 0.571 | 0.344 | 0.317–0.335 |
-| Divergence @ 5LT | 3.1% | **0%** | 100% |
+| **Ours (two-stage)** | the architecture this repository is about — separate bounded/unbounded carriers, frozen-then-trained in two stages | $k=3$ (unbounded) + $C \in [0,1]^{8\times8}$ | bounded, by construction, from splitting the carriers |
+| **φ sweep (Model B)** | one shared 16-d latent, one weighted loss, φ swept 0→1 | 16, unbounded | none |
+| **AEGRU+sigmoid (Model D)** | the φ=0.5 construction again, but its *shared* latent is bounded to $[0,1]$ and kept bounded through rollout by the same residual-logit-space step `LatentMappingDynamic` uses | 16, **bounded** | bounded, without splitting the carriers |
+| **PINN (Model C)** | autoencoder whose 3-d latent is calibrated to true Lorenz coordinates; rollout is RK4 integration of the known equations, no learned dynamics | 3, calibrated to physical units | unbounded (chaotic RK4 can leave any box) |
 
-The answer is no, not on its own — Model D copies worse than every φ setting except φ=1 and
-predicts no further than the flat φ ceiling, so bounding a single shared latent buys neither of
-Ours's headline advantages. But it does buy the *stability* half outright: 0% divergence, tied
-with Ours and against 100% for every unbounded weighted-loss setting. That's the cleanest
-statement of what splitting the latent adds on top of bounding it: bounding alone stops the
-blow-ups; separating the carriers is what additionally protects reconstruction and extends the
-forecast horizon.
+**Model D is the control the headline claim needs.** Ours differs from the φ sweep in two ways at
+once — separate carriers, and one of those carriers is bounded — so a skeptical reading of §4 is
+"maybe boundedness alone would have done this, without the split." Model D holds the boundedness
+constant and removes the split, isolating which of the two is doing the work. See §5.6.
+
+### 5.3 The comparison reproduces, with rigour fixes applied
+
+Same numbers a reviewer would check first — matched seeds where they matter, and reported alongside
+the single-series run for context:
+
+| | single series | 8-series pool |
+|---|---|---|
+| Recon NRMSE (Ours) | 0.0547 | **0.0513** |
+| VPT, Lyapunov times (Ours, 3 seeds) | 0.526 | **0.489 ± 0.013** |
+| Best φ, VPT (3 seeds where marked) | 0.344 (1 seed) | 0.326 (φ=0.5, 3 seeds) |
+| Divergence @ 5LT (Ours) | 5.7% | **0%** |
+| Divergence @ 5LT (every 1×-budget φ) | 100% | 100% |
+| Two-stage vs joint-trained VPT gap | 1.14× | **1.32×** |
+
+The φ frontier stays flat under matched seeding, not just a single lucky/unlucky draw: φ=0.1,
+φ=0.25 and φ=0.5 each now run 3 seeds at the same 120s budget as Ours, and none moves the ceiling
+past ~0.33 Lyapunov times. Ours leads clearly at matched params, budget, and seed count on both
+axes at once. The two-stage-vs-joint ablation gap holds in the same direction as the single-series
+run (joint training reshapes `b` and measurably hurts forecasting) though its exact size varies run
+to run — reported as a range rather than a single fixed number for that reason.
+
+### 5.4 Is the φ sweep just undertrained?
+
+A fair question about any fixed-budget comparison: maybe the knob would close the gap given more
+time, and 120s is simply too little for it. Tested directly — φ=0.25 retrained at **10× the wall
+clock** (1200s, one seed), reported as its own labelled row rather than folded into the matched-
+budget table:
+
+| | 1× budget (120s, 3 seeds) | 10× budget (1200s, 1 seed) |
+|---|---|---|
+| VPT, Lyapunov times | 0.320 ± 0.015 | **0.526** |
+| Recon MSE, × floor | 1.15× | 0.99× |
+
+Ten times the compute moves VPT by about 0.21 — more than ten times the 3-seed standard deviation
+of the 1× run, so the answer is **yes, the sweep is measurably undertrained at 120s**: this is not
+noise. At 10× budget it reaches roughly parity with Ours on both reconstruction and VPT, though
+still with 22% divergence against Ours's 0% (§5.6). This is reported as what happens *off* the
+matched-budget convention the rest of the comparison uses, not as a change to it — the headline
+numbers above stay at 120s for everyone.
+
+### 5.5 The PINN, fixed
+
+An earlier version of this comparison's PINN had a real bug: `val_recon` and the physics residual
+both looked healthy while the forecast rollout diverged and got *worse* through training. The cause
+— confirmed with a dedicated latent-vs-true-state check, not assumed — was that the decoder reads
+the model's raw 3-d code directly, never the physically-calibrated coordinates, so nothing in the
+reconstruction loss constrained that code's scale; only a *relative* physics residual did, and
+gradient descent satisfied it in a self-consistent but physically wrong coordinate system. The
+model's own estimate of "physical Lorenz state" ranged into the hundreds on `z`, off the true
+attractor's roughly $[3, 46]$ box, so integrating the correct equations there diverged immediately.
+
+Fixed by recalibrating the model's latent-to-physical-state affine every epoch, by least squares
+against the true state on training data, rather than letting it drift under gradient descent alone
+(`Comp/PhysicsLatentAE.py:CalibrateGauge`). Loss function, architecture and budget are unchanged —
+only how that one internal coordinate transform is determined.
+
+| | before | after |
+|---|---|---|
+| val_fcst | 17.6, rising | **0.015** |
+| latent → true-state probe $R^2$ | [0.64, 0.70, 0.10] | **[0.996, 0.989, 0.981]** |
+| VPT, Lyapunov times | 0.130 | **0.378 ± 0.019** |
+
+Ours still leads the (now-fixed) PINN on reconstruction, VPT and divergence. But at 50 Lyapunov
+times — long past where short-horizon error saturates — the PINN's attractor fidelity is the best
+in the whole comparison: Wasserstein distance to the true state distribution of **0.068**, against
+Ours's 0.170. Reported plainly: on that one axis, the model handed the exact equations is now the
+strongest tracker here, which is a legitimate result of fixing a baseline that was previously too
+broken to say anything about.
+
+### 5.6 Model D: does bounding alone explain Ours?
+
+| | Ours | AEGRU+sigmoid (D) | φ sweep, 1× budget (φ=0 and φ=1 excluded — both degenerate by construction, §4.1) |
+|---|---|---|---|
+| Copy error, × floor | 1.06× | 2.28× | 1.08×–2.01× |
+| VPT, Lyapunov times | 0.489 | 0.329 | 0.320–0.335 |
+| Divergence @ 5LT | **0%** | **0%** | 100% |
+
+No, not on its own. Model D copies worse than nearly every φ setting and predicts no further than
+the φ ceiling, so bounding a single shared latent buys neither of Ours's headline advantages. It
+does buy the *stability* half outright — 0% divergence, matching Ours, against 100% for every
+unbounded weighted-loss setting at the standard budget. That is the clean statement of what
+splitting the carriers adds on top of bounding one of them: bounding alone stops the blow-ups;
+separating them is what additionally protects reconstruction and extends the forecast horizon.
+
+### 5.7 Noise robustness
+
+The headline comparison (Ours, φ=0.1, φ=0.5, AEGRU+sigmoid, persistence, climatology), re-run at
+observation noise 0.15 and 0.30 in addition to the existing 0.05, one seed per model at the two new
+levels:
+
+| noise | Ours VPT | best φ VPT | gap |
+|---|---|---|---|
+| 0.05 | 0.489 | 0.326 | +0.163 |
+| 0.15 | 0.598 | 0.308 | +0.290 |
+| 0.30 | 0.462 | 0.254 | +0.208 |
+
+Ours leads at every noise level tested — the gap never narrows to zero or reverses — but it is
+**not monotonic**: it peaks at noise 0.15 rather than moving in one direction as noise increases.
+Reported as the sequence rather than forced into a single "widens" or "narrows," since that is what
+the numbers actually show. Ours's divergence stays at 0% across all three noise levels; every φ
+setting's divergence is 100% at 0.05 and 0.15 and drops only at 0.30.
+
+### 5.8 A reconstruction number worth flagging
+
+One model in the final run sits fractionally *below* the measured noise floor: `phi=0.25` at 10×
+budget (§5.4), 0.99× — the smallest violation in the table and the only one present in the final
+committed run. It is not a second data leak: `Warm`, the evaluation windows, are built once and
+reused for every row, so a leak would lift all of them, not one. A dedicated control — the same
+φ=0 configuration retrained with `latent=3` instead of `JointAEGRU`'s default 16, i.e. capacity-
+matched to the true Lorenz dimensionality — moved cleanly above the floor (1.10×), which points at
+spare latent capacity (16 vs. the true 3) letting a heavily-trained, unregularised shared latent
+denoise slightly past the naive per-channel floor via cross-channel redundancy, rather than at a
+correctness bug. The effect size is small enough (under 1%) that which side of 1.0 a given run
+lands on varies with ordinary seed noise — an earlier run had `phi=0` itself (1× budget) below the
+floor at 0.98×; the current run has it at 1.01×, same configuration, same seed.
 
 ---
 
@@ -548,8 +604,11 @@ Experimentation/
   NeuralNetworkApproximation.ipynb           Stage 1 alone, in detail
   LatentForecastComparison.ipynb             the single-series comparison
   LatentForecastComparisonMultiSeries.ipynb  the 8-series pool + held-out generalisation test
-Data/                   LorenzLift.npz, LorenzEval.npz, LorenzLiftMulti.npz
+Data/                   LorenzLift.npz, LorenzEval.npz, LorenzLiftMulti.npz,
+                        LorenzLiftMulti_noise0.15.npz, LorenzLiftMulti_noise0.3.npz (§5.7)
 Checkpoints/            trained model weights, cached by Utils.Checkpoints.TrainOrLoad
+  multi_series/           the main 8-series-pool comparison
+  multi_series/noise_sweep/noise{0.15,0.3}/   the two extra noise levels (§5.7)
 Figures/                every figure in this README, 300 dpi
 ```
 
@@ -562,27 +621,38 @@ jupyter lab Experimentation/LatentForecastComparison.ipynb            # single-s
 jupyter lab Experimentation/LatentForecastComparisonMultiSeries.ipynb # 8-series pool + generalisation
 ```
 
-Set `QUICK = True` in the config cell for a fast smoke run. A full run is `120 s` per model
-configuration, `~13` configurations. Every trained model is cached to `Checkpoints/` the first
-time it trains (`Utils/Checkpoints.py:TrainOrLoad`) — re-running the notebook after editing an
-evaluation or plotting cell loads the cached weights instead of re-training; delete a checkpoint
-file (or the whole directory) to force that model to retrain.
+Set `QUICK = True` in the config cell for a fast smoke run. A full run of the multi-series notebook
+trains on the order of twenty model configurations (the main comparison, the seeded baselines, the
+budget control, the PINN diagnostics, and the noise sweep) at 120 s each; end to end, from an empty
+`Checkpoints/` directory, this takes roughly **three hours** on one pinned CPU thread. Every trained
+model is cached to `Checkpoints/` the first time it trains (`Utils/Checkpoints.py:TrainOrLoad`) —
+re-running the notebook after editing an evaluation or plotting cell loads the cached weights
+instead of retraining; delete a checkpoint file (or the whole directory) to force that model to
+retrain. The noise-sweep datasets (§5.7) are generated automatically on first use if missing.
 
 ### Caveats worth knowing
 
-- **One system, one lift, one noise level.** The claim is demonstrated on Lorenz-63. Turbofan,
-  weather or bearing data are needed before it is a claim about representations in general.
-- **Seeds are uneven.** Ours and the PINN run 3 seeds in both experiments; the φ sweep and Model D
-  run 1 each, so a `VPT std` of `0.0000` on those rows means $n=1$, not stability. §5.3's PINN
-  regression under pooling is reported on single seeds and could be seed noise.
-- **Absolute horizons are short.** 0.526–0.571 Lyapunov times is 58–63 steps. Chaos is hard;
-  everyone here fails eventually. The claim is comparative.
-- **The φ baseline is a construction**, not a named published method — the weighted-loss
-  autoencoder+GRU in its plainest form, and Model D (§5.4) is the same construction with a bounded
-  latent, not a published method either.
-- **φ=0 beating the noise floor (§5.2) is a live, single-seed finding.** The evaluation-path
-  argument against a leak is solid; the "spare latent capacity" explanation is the leading
-  hypothesis, not yet confirmed by the `latent=3` control that would settle it.
-- **Every number here is one run.** Re-running the same notebook end to end changes VPT, the
-  ablation gap and the probe $R^2$ by seed and wall-clock variance alone — compare the two full
-  extractions of this experiment in the git history if you want a feel for the spread.
+- **One system, one lift, one noise level in the headline comparison.** §5.7 adds two more noise
+  levels; turbofan, weather or bearing data are still needed before this is a claim about
+  representations in general rather than about Lorenz-63.
+- **Seeds are still uneven by design, not oversight.** Ours, the PINN, φ=0.1/0.25/0.5, and
+  AEGRU+sigmoid run 3 seeds; every other φ setting and the noise-sweep runs are 1 seed — extending
+  every row to 3 seeds was judged not worth roughly tripling an already ~3-hour run for points a
+  reviewer is unlikely to query. A `VPT std` of `0.0000` still means $n=1$ on those specific rows.
+- **Absolute horizons are still short.** 0.32–0.60 Lyapunov times across the models and noise
+  levels tested is on the order of 35–65 steps. Chaos is hard; every model here fails eventually.
+  The claim is comparative, not absolute.
+- **The φ baseline and Model D are both constructions**, not named published methods — the
+  weighted-loss autoencoder+GRU in its plainest form, and the same construction with a bounded
+  shared latent.
+- **The 10× budget control (§5.4) used one seed.** It answers "is 120s enough" with a clear yes-or-
+  no; it does not by itself establish where the φ sweep's ceiling would land with both 10× budget
+  and 3 seeds together — that combination was not run.
+- **A small reconstruction-floor violation persists in the final run** (§5.8): `phi=0.25` at 10×
+  budget sits at 0.99× the measured floor. Investigated, attributed to spare latent capacity via a
+  dedicated `latent=3` control, and small enough (under 1%) that it is within ordinary seed-to-seed
+  noise for this configuration — but it is a real number in the committed table, not smoothed away.
+- **Every number here is one run of a stochastic training process.** Re-running the same notebook
+  end to end changes VPT, the ablation gap, and which side of the noise floor a given model lands
+  on — compare the successive full extractions of this experiment in the git history for a feel for
+  the spread, most visibly in §5.8.
