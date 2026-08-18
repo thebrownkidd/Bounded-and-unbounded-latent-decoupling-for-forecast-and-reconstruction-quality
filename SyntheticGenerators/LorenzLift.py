@@ -89,6 +89,78 @@ def windows(series, lookback=64, horizon=50):
     return X, Y
 
 
+# --------------------------------------------------------------------------
+# Held-out evaluation trajectories.
+#
+# The test split is 3000 steps, about 27 Lyapunov times. Long rollouts cut from
+# it overlap heavily, so their errors are correlated and the spread across
+# "different" starts is far narrower than it looks. Independent trajectories fix
+# that -- but only if they land in exactly the same observation space, which
+# means freezing the lift rather than redrawing it.
+# --------------------------------------------------------------------------
+
+def lift_params(states, n_obs=30, noise=0.05, seed=0, hidden=16, train_frac=0.7):
+    """Recover every constant `lift` + `make_dataset` used, from the same seed.
+
+    lift() draws W1, W2 and the noise from one default_rng(seed) in that order,
+    so replaying the sequence reproduces the map exactly -- including the noise
+    realisation, which is what makes the train-split mu/sd recoverable. Those
+    are not stored in the npz and cannot be recovered from `train` alone, since
+    standardisation erased them.
+    """
+    rng = np.random.default_rng(seed)
+    state_mu, state_sd = states.mean(0), states.std(0)
+    s = (states - state_mu) / state_sd
+
+    W1 = rng.normal(0, 1.0, size=(3, hidden))
+    W2 = rng.normal(0, 1.0, size=(hidden, n_obs))
+    raw = np.tanh(s @ W1) @ W2
+
+    clean_mu, clean_sd = raw.mean(0), raw.std(0)
+    clean = (raw - clean_mu) / clean_sd
+    obs = clean + rng.normal(0, noise, size=clean.shape)
+
+    i = int(len(obs) * train_frac)
+    obs_mu, obs_sd = obs[:i].mean(0), obs[:i].std(0)
+
+    return {"W1": W1, "W2": W2, "state_mu": state_mu, "state_sd": state_sd,
+            "clean_mu": clean_mu, "clean_sd": clean_sd,
+            "obs_mu": obs_mu, "obs_sd": obs_sd, "noise": noise,
+            "clean": clean, "train": (obs[:i] - obs_mu) / obs_sd}
+
+
+def lift_with(states, params, rng):
+    """Apply an already-fixed lift to new states. Returns (obs, clean).
+
+    Every constant comes from `params`, none from `states` -- a fresh trajectory
+    standardised by its own statistics would sit in a subtly different space and
+    quietly invalidate the comparison.
+    """
+    s = (states - params["state_mu"]) / params["state_sd"]
+    clean = (np.tanh(s @ params["W1"]) @ params["W2"] - params["clean_mu"]) / params["clean_sd"]
+    obs = clean + rng.normal(0, params["noise"], size=clean.shape)
+    return (obs - params["obs_mu"]) / params["obs_sd"], clean
+
+
+def make_eval_trajectories(params, n_traj=32, n_steps=12000, dt=0.01,
+                           burn_in=2000, seed=1234):
+    """Independent Lorenz trajectories in the training observation space.
+
+    Initial conditions are drawn well off the attractor and burned in, so the
+    trajectories are independent of each other and of the training run rather
+    than being distant points on the same orbit.
+    """
+    rng = np.random.default_rng(seed)
+    obs, states = [], []
+    for _ in range(n_traj):
+        x0 = tuple(rng.uniform(-15.0, 15.0, size=3))
+        st = lorenz63(n_steps=n_steps, dt=dt, x0=x0, burn_in=burn_in)
+        o, _ = lift_with(st, params, rng)
+        obs.append(o)
+        states.append(st)
+    return np.stack(obs), np.stack(states)
+
+
 if __name__ == "__main__":
     d = make_dataset()
     X, Y = windows(d["train"])
@@ -112,6 +184,22 @@ if __name__ == "__main__":
         f.write(f"lookback: {64}\n")
         f.write(f"horizon: {50}\n")
     
+    # Independent held-out trajectories for long-rollout evaluation.
+    # The two asserts are the load-bearing part: they prove the replayed lift is
+    # the same map that produced LorenzLift.npz. If they fail, the eval set
+    # lives in a different observation space and nothing measured on it is
+    # comparable to anything measured on train/val/test.
+    params = lift_params(d["states"])
+    assert np.allclose(params["clean"], d["clean"], atol=1e-10), "lift replay mismatch"
+    assert np.allclose(params["train"], train, atol=1e-10), "train replay mismatch"
+    print("lift replay verified against LorenzLift.npz")
+
+    eval_obs, eval_states = make_eval_trajectories(params)
+    np.savez("Data/LorenzEval.npz", obs=eval_obs, states=eval_states,
+             obs_mu=params["obs_mu"], obs_sd=params["obs_sd"],
+             state_mu=params["state_mu"], state_sd=params["state_sd"])
+    print(f"eval trajectories {eval_obs.shape}  states {eval_states.shape}")
+
     # Sanity check: the observations really do lie on a 3-d manifold.
     # Linear PCA will NOT show a clean cut at 3 -- the lift is nonlinear,
     # so 3 intrinsic dimensions smear across many linear components.
