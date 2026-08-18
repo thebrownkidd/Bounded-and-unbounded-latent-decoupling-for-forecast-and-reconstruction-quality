@@ -123,8 +123,11 @@ $$s_t = \frac{\text{state}_t - \mu}{\sigma}, \qquad
 x_t = \widetilde{\text{clean}}_t + \varepsilon_t,\;\; \varepsilon_t \sim \mathcal{N}(0,\, 0.05^2)$$
 
 with $W_1 \in \mathbb{R}^{3\times16}$, $W_2 \in \mathbb{R}^{16\times30}$. Noise is 5% of each
-channel's spread, which fixes the **reconstruction floor at $0.05^2 = 0.0025$ MSE** — no model can
-beat it. Generator: [LorenzLift.py](SyntheticGenerators/LorenzLift.py).
+channel's spread, which fixes a **reconstruction floor no model can beat**. That floor is
+*measured* directly from the generated data rather than assumed as $0.05^2$: **0.002545 MSE** for
+the single-series set, **0.002510** for the multi-series pool (§5) — close to $0.05^2 = 0.0025$
+but not exactly it, since the final per-channel standardisation leaves `obs_sd` a hair off 1.
+Generator: [LorenzLift.py](SyntheticGenerators/LorenzLift.py).
 
 ### 2.2 Shapes
 
@@ -239,7 +242,7 @@ Twelve models compete. **Every one gets exactly the same resources**: 124,482 ad
 Two things are measured.
 
 - **Copying** — show the model a signal, ask it to reproduce it. Lower error is better. There is a
-  hard floor of `0.0025` because the data has random noise in it that nothing can predict.
+  hard floor of `0.002545` because the data has random noise in it that nothing can predict.
 - **Predicting** — show the model 64 steps, then cut it off and let it run blind. Count how long
   before it's badly wrong. Measured in **Lyapunov times**; 1 Lyapunov time ≈ 110 steps. Chaos makes
   this brutally hard — that is the point.
@@ -268,12 +271,12 @@ The star is somewhere the dial cannot reach at any setting.
 
 | model | copy error | how far above the floor |
 |---|---|---|
-| φ=0 (pure copier, doesn't predict at all) | 0.00280 | 1.12× |
-| φ=0.1 | 0.00296 | 1.18× |
-| **Ours** | **0.00313** | **1.25×** |
-| φ=0.5 | 0.00369 | 1.47× |
-| PINN (given the true equations) | 0.00391 | 1.57× |
-| φ=1 | 0.01243 | 4.97× |
+| φ=0 (pure copier, doesn't predict at all) | 0.00280 | 1.10× |
+| φ=0.1 | 0.00296 | 1.16× |
+| **Ours** | **0.00313** | **1.23×** |
+| φ=0.5 | 0.00369 | 1.45× |
+| PINN (given the true equations) | 0.00391 | 1.54× |
+| φ=1 | 0.01243 | 4.88× |
 
 Third out of ten. In $R^2$ terms — the "percentage explained" score — a model that does *nothing but
 copy* scores **0.9973**. Ours scores **0.9970**. That difference is three ten-thousandths.
@@ -404,7 +407,99 @@ balanced. It was removed by construction.**
 
 ---
 
-## 5. Repository
+## 5. Generalization: training on multiple series
+
+Everything above trains on **one** 20,000-step trajectory, chronologically split 70/15/15. That
+leaves an obvious question: does the architecture's advantage survive contact with more than one
+orbit, or is it a property of that one trajectory?
+
+**The multi-series setup.** [LatentForecastComparisonMultiSeries.ipynb](Experimentation/LatentForecastComparisonMultiSeries.ipynb)
+mirrors the single-series notebook cell for cell, with two changes to the data:
+
+- **8 independent training-pool trajectories**, each individually split 70/15/15 exactly like the
+  single-series run, then pooled. Windows never cross a trajectory boundary — a sliding window
+  over the naive concatenation would splice the tail of one orbit onto the head of the next.
+- **32 further trajectories, held out completely** — never chronologically split, never touched
+  in any form during training. This already existed as the long-rollout evaluation set (§2.3); the
+  multi-series run is what makes it a genuine test of a trajectory the model has never seen, not
+  just a continuation of one it partially has.
+
+All 8 training series and the 32 held-out ones share one frozen lift, so a multi-series model and
+a single-series model decode to the same kind of number — but not the same *scale*: the final
+per-channel standardisation is fit on the pooled 8-series training pool rather than one trajectory,
+so raw MSE is not directly comparable between the two experiments. The floor-relative ratios below
+are.
+
+### 5.1 The comparison reproduces — and the margin widens
+
+| | single series | 8-series pool |
+|---|---|---|
+| Recon NRMSE (Ours) | 0.0547 | **0.0510** |
+| VPT, Lyapunov times (Ours) | 0.526 | **0.649 ± 0.083** |
+| Best φ, VPT | 0.344 | 0.335 |
+| Divergence @ 5LT (Ours) | 5.7% | **4.2%** |
+| Divergence @ 5LT (every φ) | 100% | 100% |
+| Two-stage vs joint-trained VPT gap | 1.14× | **2.05×** |
+| $b_t \to$ true-state probe $R^2$ | [0.63, 0.42, 0.85] | **[0.90, 0.77, 0.89]** |
+
+Same shape as §4: the φ frontier is flat regardless of how much data it gets — best VPT is 0.344
+with one series, 0.335 with eight, the same ceiling the single-series run found. Ours moved
+*further* above it, from 0.526 to 0.649 Lyapunov times, a 23% gain from more training diversity
+alone with nothing else changed. And the two-stage-vs-joint ablation gap nearly doubled — training
+end-to-end got *worse* at forecasting with more data (0.462 → 0.317 Lyapunov times) while
+two-stage training pulled further ahead, which is the opposite of what "the split was a fluke of
+one small dataset" would predict.
+
+The unbounded latent's state-recovery also improved substantially — the affine probe from $b_t$
+to true $(x, y, z)$ went from explaining 42–85% of each coordinate's variance to 77–90%. One
+trajectory gives the encoder one orbit's worth of examples to learn that map from; eight
+independent ones generalise it.
+
+### 5.2 Copying, on the pooled 8-series scale
+
+| model | copy error | how far above the floor |
+|---|---|---|
+| φ=0 (pure copier) | 0.00249 | 0.99× |
+| **Ours** | **0.00263** | **1.05×** |
+| φ=0.1 | 0.00275 | 1.10× |
+| φ=0.25 | 0.00290 | 1.16× |
+| φ=0.5 | 0.00316 | 1.26× |
+| PINN (rho=26) | 0.00340 | 1.35× |
+| PINN (true physics) | 0.00386 | 1.54× |
+| φ=0.75 | 0.00409 | 1.63× |
+| φ=0.9 | 0.00488 | 1.94× |
+| φ=1 | 0.00889 | 3.54× |
+
+Even closer to the pure copier than in the single-series run (1.05× the floor, against 1.23×
+before) — test $R^2$ = 0.9974, pooled across all 8 test splits.
+
+### 5.3 One result that went the other way: the physics oracle
+
+| | single series | 8-series pool |
+|---|---|---|
+| PINN (true physics), VPT | 0.233 | **0.121** |
+| PINN (true physics), Wasserstein @ 50LT | 0.082 | **1.496** |
+| PINN (ρ=26), VPT | 0.027 | **0.009** |
+| PINN (ρ=26), divergence @ 5LT | 4.7% | **100%** |
+
+The model handed the exact governing equations got meaningfully worse with more training
+diversity, and the misspecified control effectively collapsed. Both PINN configurations run a
+single seed here, so this could be one unlucky draw rather than a systematic effect of pooling —
+recorded as an open question, not explained away. Ours stays the best long-horizon tracker either
+way (Wasserstein 0.171 against the PINN's 1.496, both far below every φ setting's 100+).
+
+### 5.4 A fourth baseline, added but not yet run: bounding without splitting
+
+The comparison notebook now also builds `JointAEGRUSigmoid` (`Comp/JointAEGRUSigmoid.py`) — the
+weighted-loss AE+GRU with a sigmoid on its *shared* latent, kept bounded through an arbitrarily
+long rollout by the same residual-logit-space trick `LatentMappingDynamic` uses. It isolates the
+one variable the headline result could still be confounded by: is boundedness alone worth
+something, independent of splitting the latent in two? Wired into every comparison table and the
+Pareto plot as **Model D**, trained at a single `phi = 0.5`. Numbers pending the next full run.
+
+---
+
+## 6. Repository
 
 ```
 Src/                    the architecture
@@ -416,15 +511,18 @@ Src/                    the architecture
   Decoder.py            D : C -> x_hat
   DecoupledModel.py     assembly, Rollout, stage partitions
 Comp/                   baselines (nothing here is ours)
-  JointAEGRU.py         the weighted-loss knob
-  PhysicsLatentAE.py    the PINN, RK4 on the true field
-  LorenzField.py        differentiable Lorenz-63 RHS
-Utils/                  DataLoading, Metrics, Rollout, Benchmark, Plotting
-SyntheticGenerators/    LorenzLift.py — the data generator
+  JointAEGRU.py                the weighted-loss knob
+  JointAEGRUSigmoid.py         the knob, with a bounded shared latent (§5.4)
+  PhysicsLatentAE.py           the PINN, RK4 on the true field
+  LorenzField.py               differentiable Lorenz-63 RHS
+Utils/                  DataLoading, Metrics, Rollout, Benchmark, Plotting, Checkpoints
+SyntheticGenerators/    LorenzLift.py — the data generator, single- and multi-series
 Experimentation/
-  NeuralNetworkApproximation.ipynb   Stage 1 alone, in detail
-  LatentForecastComparison.ipynb     the full 12-way comparison
-Data/                   LorenzLift.npz, LorenzEval.npz
+  NeuralNetworkApproximation.ipynb           Stage 1 alone, in detail
+  LatentForecastComparison.ipynb             the single-series comparison
+  LatentForecastComparisonMultiSeries.ipynb  the 8-series pool + held-out generalisation test
+Data/                   LorenzLift.npz, LorenzEval.npz, LorenzLiftMulti.npz
+Checkpoints/            trained model weights, cached by Utils.Checkpoints.TrainOrLoad
 Figures/                every figure in this README, 300 dpi
 ```
 
@@ -432,20 +530,28 @@ Figures/                every figure in this README, 300 dpi
 
 ```bash
 pip install -r requirements.txt
-python SyntheticGenerators/LorenzLift.py        # regenerate the data (optional)
-jupyter lab Experimentation/LatentForecastComparison.ipynb
+python SyntheticGenerators/LorenzLift.py        # regenerate the single-series data (optional)
+jupyter lab Experimentation/LatentForecastComparison.ipynb            # single-series
+jupyter lab Experimentation/LatentForecastComparisonMultiSeries.ipynb # 8-series pool + generalisation
 ```
 
-Set `QUICK = True` in the config cell for a fast smoke run. The full run is
-`120 s × 12 configurations` on one pinned CPU thread.
+Set `QUICK = True` in the config cell for a fast smoke run. A full run is `120 s` per model
+configuration, `~13` configurations. Every trained model is cached to `Checkpoints/` the first
+time it trains (`Utils/Checkpoints.py:TrainOrLoad`) — re-running the notebook after editing an
+evaluation or plotting cell loads the cached weights instead of re-training; delete a checkpoint
+file (or the whole directory) to force that model to retrain.
 
 ### Caveats worth knowing
 
 - **One system, one lift, one noise level.** The claim is demonstrated on Lorenz-63. Turbofan,
   weather or bearing data are needed before it is a claim about representations in general.
-- **Seeds are uneven.** Ours and the PINN run 3 seeds; the φ sweep runs 1 each, so a `VPT std` of
-  `0.0000` on those rows means $n=1$, not stability.
-- **Absolute horizons are short.** 0.526 Lyapunov times is ~58 steps. Chaos is hard; everyone here
-  fails eventually. The claim is comparative.
+- **Seeds are uneven.** Ours and the PINN run 3 seeds in both experiments; the φ sweep and Model D
+  run 1 each, so a `VPT std` of `0.0000` on those rows means $n=1$, not stability. §5.3's PINN
+  regression under pooling is reported on single seeds and could be seed noise.
+- **Absolute horizons are short.** 0.526–0.649 Lyapunov times is 58–72 steps. Chaos is hard;
+  everyone here fails eventually. The claim is comparative.
 - **The φ baseline is a construction**, not a named published method — the weighted-loss
-  autoencoder+GRU in its plainest form.
+  autoencoder+GRU in its plainest form, and Model D (§5.4) is the same construction with a bounded
+  latent, not a published method either.
+- **Model D has no numbers yet.** It is wired into every table and the Pareto plot but has not
+  been run as of this revision.

@@ -3,10 +3,12 @@ import pandas as pd
 import os
 
 def LoadLorenzData(path):
-    """Load Lorenz dataset from a CSV file.
+    """Load the single-series Lorenz dataset built by SyntheticGenerators.LorenzLift.
 
-    Returns dict with train/val/test observations, plus the clean signal
-    and true 3-d latent states for diagnostics. Never train on those two.
+    Returns train/val/test observations, the clean signal and true 3-d latent
+    states for diagnostics (never train on those two), and the MEASURED
+    reconstruction noise floor -- an empirical MSE, not the naive noise**2,
+    which is only exact if the final standardisation left obs_sd at exactly 1.
     """
     data = np.load(path)
     train = data['train']
@@ -14,9 +16,9 @@ def LoadLorenzData(path):
     test = data['test']
     clean = data['clean']
     states = data['states']
+    noise_floor_mse = float(data['noise_floor_mse']) if 'noise_floor_mse' in data else 0.05 ** 2
 
-
-    return train, val, test, clean, states
+    return train, val, test, clean, states, noise_floor_mse
 
 
 def LoadLorenzMultiSeries(path):
@@ -33,4 +35,5 @@ def LoadLorenzMultiSeries(path):
     return {"train": d["train"], "val": d["val"], "test": d["test"],
            "clean": d["clean"], "states": d["states"],
            "holdout_obs": d["holdout_obs"], "holdout_states": d["holdout_states"],
-           "obs_mu": d["obs_mu"], "obs_sd": d["obs_sd"]}
+           "obs_mu": d["obs_mu"], "obs_sd": d["obs_sd"],
+           "noise_floor_mse": float(d["noise_floor_mse"])}

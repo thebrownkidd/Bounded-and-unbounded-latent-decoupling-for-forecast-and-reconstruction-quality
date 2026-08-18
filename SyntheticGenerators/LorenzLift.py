@@ -64,6 +64,7 @@ def make_dataset(n_steps=20000, n_obs=30, noise=0.05, dt=0.01, seed=0,
     """
     states = lorenz63(n_steps=n_steps, dt=dt, seed=seed)
     obs, clean = lift(states, n_obs=n_obs, noise=noise, seed=seed)
+    noise_raw = obs - clean                # the actual noise draw, pre-final-rescale
 
     n = len(obs)
     i, j = int(n * train_frac), int(n * (train_frac + val_frac))
@@ -72,10 +73,16 @@ def make_dataset(n_steps=20000, n_obs=30, noise=0.05, dt=0.01, seed=0,
     mu, sd = obs[:i].mean(0), obs[:i].std(0)
     obs = (obs - mu) / sd
 
+    # The MSE floor no model can beat, MEASURED in the final standardised scale
+    # rather than assumed from the noise parameter -- `noise**2` is only exact
+    # if obs_sd == 1, which it is not quite, since sd is fit on noisy data.
+    noise_floor_mse = float(((noise_raw[:i] / sd) ** 2).mean())
+
     return {
         "train": obs[:i], "val": obs[i:j], "test": obs[j:],
         "clean": clean, "states": states,      # diagnostics only
-        "noise_floor": noise,                  # reconstruction MSE can't beat ~noise^2
+        "noise_floor": noise,                  # the config knob, not a usable MSE
+        "noise_floor_mse": noise_floor_mse,    # the actual floor -- use this one
     }
 
 
@@ -237,9 +244,15 @@ def make_multi_series_dataset(n_series=8, n_steps=20000, n_obs=30, noise=0.05, d
         ho_obs.append(scale(raw_obs))
         ho_states.append(st)
 
+    # The MSE floor no model can beat, MEASURED in the final standardised scale
+    # and pooled across the training-pool trajectories -- see make_dataset.
+    noise_train_raw = np.concatenate([raw[:i] - c[:i] for raw, c in pool_raw])
+    noise_floor_mse = float(((noise_train_raw / obs_sd) ** 2).mean())
+
     return {"train": train, "val": val, "test": test, "clean": clean, "states": states,
            "holdout_obs": np.stack(ho_obs), "holdout_states": np.stack(ho_states),
-           "obs_mu": obs_mu, "obs_sd": obs_sd, "noise_floor": noise}
+           "obs_mu": obs_mu, "obs_sd": obs_sd, "noise_floor": noise,
+           "noise_floor_mse": noise_floor_mse}
 
 
 def save_multi_series_dataset(path="Data/LorenzLiftMulti.npz",
@@ -251,7 +264,8 @@ def save_multi_series_dataset(path="Data/LorenzLiftMulti.npz",
     np.savez(path, train=d["train"], val=d["val"], test=d["test"],
              clean=d["clean"], states=d["states"],
              holdout_obs=d["holdout_obs"], holdout_states=d["holdout_states"],
-             obs_mu=d["obs_mu"], obs_sd=d["obs_sd"])
+             obs_mu=d["obs_mu"], obs_sd=d["obs_sd"],
+             noise_floor_mse=d["noise_floor_mse"])
     with open(readme_path, "w") as f:
         f.write(f"n_series (training pool): {d['train'].shape[0]}\n")
         f.write(f"per-series steps: train {d['train'].shape[1]}  "
@@ -260,7 +274,7 @@ def save_multi_series_dataset(path="Data/LorenzLiftMulti.npz",
                f"{d['holdout_obs'].shape[0]}\n")
         f.write(f"holdout steps: {d['holdout_obs'].shape[1]}\n")
         f.write(f"n_obs: {d['train'].shape[-1]}\n")
-        f.write(f"noise_floor (MSE): {d['noise_floor'] ** 2:.5f}\n")
+        f.write(f"noise_floor_mse (measured, use this): {d['noise_floor_mse']:.6f}\n")
         f.write("obs_mu/obs_sd: fit on the POOLED train chunk across every "
                "training-pool series.\n")
         f.write("Same frozen lift (W1, W2) as LorenzLift.npz would use at the "
@@ -274,12 +288,13 @@ if __name__ == "__main__":
     X, Y = windows(d["train"])
     print(f"train {d['train'].shape}  val {d['val'].shape}  test {d['test'].shape}")
     print(f"windows X {X.shape}  Y {Y.shape}")
-    print(f"noise floor (MSE): {d['noise_floor'] ** 2:.5f}")
+    print(f"noise floor (measured MSE): {d['noise_floor_mse']:.6f}")
     train = d["train"]
     test = d["test"]
     val = d["val"]
     os.makedirs("Data", exist_ok=True)
-    np.savez("Data/LorenzLift.npz", train=train, test=test, val=val, clean=d["clean"], states=d["states"])
+    np.savez("Data/LorenzLift.npz", train=train, test=test, val=val, clean=d["clean"], states=d["states"],
+             noise_floor_mse=d["noise_floor_mse"])
     #also save a readme file with the parameters used to generate the dataset
     with open("Data/LorenzLift_README.txt", "w") as f:
         f.write(f"n_steps: {20000}\n")
@@ -291,7 +306,8 @@ if __name__ == "__main__":
         f.write(f"test_frac: {0.15}\n")
         f.write(f"lookback: {64}\n")
         f.write(f"horizon: {50}\n")
-    
+        f.write(f"noise_floor_mse (measured, use this): {d['noise_floor_mse']:.6f}\n")
+
     # Independent held-out trajectories for long-rollout evaluation.
     # The two asserts are the load-bearing part: they prove the replayed lift is
     # the same map that produced LorenzLift.npz. If they fail, the eval set
