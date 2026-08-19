@@ -539,12 +539,12 @@ broken to say anything about.
 |---|---|---|---|
 | Copy error, × floor | 1.06× | 2.28× | 1.08×–2.01× |
 | VPT, Lyapunov times | 0.489 | 0.329 | 0.320–0.335 |
-| Divergence @ 5LT | **0%** | **0%** | 100% |
+| Divergence @ 5LT | **0%** | **1.6%** | 100% |
 
 No, not on its own. Model D copies worse than nearly every φ setting and predicts no further than
 the φ ceiling, so bounding a single shared latent buys neither of Ours's headline advantages. It
-does buy the *stability* half outright — 0% divergence, matching Ours, against 100% for every
-unbounded weighted-loss setting at the standard budget. That is the clean statement of what
+does buy the *stability* half outright — 1.6% divergence against 100% for every unbounded
+weighted-loss setting at the standard budget, essentially matching Ours's 0%. That is the clean statement of what
 splitting the carriers adds on top of bounding one of them: bounding alone stops the blow-ups;
 separating them is what additionally protects reconstruction and extends the forecast horizon.
 

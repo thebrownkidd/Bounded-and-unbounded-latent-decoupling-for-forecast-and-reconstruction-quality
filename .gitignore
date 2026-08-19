@@ -5,3 +5,9 @@ Checkpoints/
 .claude
 .github
 __pycache__/
+# LaTeX build artefacts
+Paper/*.aux
+Paper/*.log
+Paper/*.out
+Paper/*.bbl
+Paper/*.blg
