@@ -1,6 +1,7 @@
 \documentclass{article}
 
 \usepackage[dblblindworkshop]{neurips_2026}
+
 \workshoptitle{Foundation Models for Temporal Systems (FMTS)}
 
 \usepackage[utf8]{inputenc}
@@ -17,7 +18,7 @@
 
 \title{Is the Reconstruction--Forecasting Tradeoff a Frontier\\or an Operating Point?}
 
-\author{Anonymous Author(s)\\ Affiliation \\ Address \\ \texttt{email}}
+\author{Arpit Goel\\ TwinSim Labs \\ arpit@thebrownkid.in}
 
 \begin{document}
 
@@ -33,15 +34,14 @@ to serve both objectives. On a controlled chaotic benchmark (Lorenz-63 lifted to
 an unbounded 3-d carrier read only by the forecaster and a sigmoid-bounded
 $8\times8$ carrier read only by the decoder, trained in two stages so that the
 forecast gradient provably cannot reach the decoder. At matched parameters,
-matched wall clock and matched seeds, the split Pareto-dominates
-\emph{every} setting of the weighted-loss knob that forecasts at all. We then
-report the result that complicates this: the advantage is compute-dependent.
-Given $10\times$ the wall clock, the balancing baseline overtakes the split on
-both headline axes. What does not transfer with compute is stability --- bounded
-decoding keeps out-of-range rollouts at $0\%$ against $100\%$ for every
-unbounded baseline. We conclude the tradeoff is not one fixed frontier, and
-argue that compute-matched comparison alone cannot settle whether it is
-dissolvable.
+matched wall clock and matched seeds, the split Pareto-dominates \emph{every} setting of the
+weighted-loss knob that forecasts at all. We then report the result that
+complicates this: the advantage is compute-dependent --- given $10\times$ the
+wall clock, the balancing baseline overtakes it on both headline axes. What does
+not transfer with compute is stability: bounded decoding holds out-of-range
+rollouts at $0\%$ against $100\%$ for every unbounded baseline. The tradeoff is
+therefore not one fixed frontier, and compute-matched comparison alone cannot
+settle whether it is dissolvable.
 \end{abstract}
 
 \section{Introduction}
@@ -50,66 +50,52 @@ A large body of work trains one encoder to serve two objectives at once:
 reconstruct the present and forecast the future. The standard mechanism is a
 weighted loss, $\mathcal{L} = (1-\phi)\mathcal{L}_{\mathrm{rec}} +
 \phi\mathcal{L}_{\mathrm{fcst}}$, with $\phi$ tuned per dataset. Coupled
-Attention Networks \citep{coupledattn} state the weights explicitly as ``a
-tradeoff between the prediction and reconstruction models''; CAAE
-\citep{caae} names the underlying ``objective mismatch between training for
-reconstruction fidelity and [the downstream task]''; a broad cluster of
-reconstruction-plus-prediction hybrids follows the same recipe
-\citep{memaae,hyvae}. In physics-informed sequence modelling, SSP
-\citep{ssp} pursues the same separation by a different route --- spectral
-truncation --- describing its contribution as ``decoupling reconstruction
-fidelity from rollout regularity.''
-
-Across these paradigms the tradeoff is treated as something to \emph{tune}.
-Almost nobody asks whether the tuning is necessary. That is the question here.
+Attention Networks \citep{coupledattn} call their weights ``a tradeoff between
+the prediction and reconstruction models''; CAAE \citep{caae} names the
+``objective mismatch between training for reconstruction fidelity and [the
+downstream task]''; a cluster of reconstruction-plus-prediction hybrids follows
+the same recipe \citep{memaae,hyvae}; and SSP \citep{ssp} pursues the same
+separation by spectral truncation, ``decoupling reconstruction fidelity from
+rollout regularity.'' Across all of them the tradeoff is something to
+\emph{tune}. Almost nobody asks whether the tuning is necessary.
 
 \paragraph{What we are not claiming.}
 Rate--distortion theory \citep{shannon,berger} proves a frontier between rate
-and distortion for a given source, and the information bottleneck
-\citep{tishby} extends this to predictive representations. We are not claiming
-to beat any such bound. Rate--distortion constrains distortion \emph{at a fixed
-rate}; it says nothing about which point inside the achievable region a given
-architecture and schedule lands on. Our claim is only about the latter: at
-fixed capacity and fixed compute, a shared latent under a weighted loss does
-not reach the best available point, and separating the carriers moves it.
+and distortion for a source, and the information bottleneck \citep{tishby}
+extends this to predictive representations. We are not claiming to beat any such
+bound. Rate--distortion constrains distortion \emph{at a fixed rate}; it says
+nothing about which point inside the achievable region a given architecture and
+schedule lands on. Our claim is only the latter: at fixed capacity and compute,
+a shared latent under a weighted loss does not reach the best available point,
+and separating the carriers moves it.
 
 \paragraph{Contributions.}
-(i) We give a controlled, compute-matched test of whether the
-reconstruction--forecasting tradeoff is a frontier or an operating point, on a
-system whose true intrinsic dimension is known.
-(ii) We show a bounded/unbounded latent split, trained in two stages,
-Pareto-dominates every weighted-loss setting that forecasts at all, at matched
-parameters, wall clock and seeds.
-(iii) We report a negative result that constrains this: the dominance does not
-survive a $10\times$ compute budget for the baseline.
-(iv) We isolate which architectural ingredient buys what, using a bounded-shared-latent
-control, and find boundedness and separation buy different things.
+(i) A controlled, compute-matched test of whether the tradeoff is a frontier or
+an operating point, on a system of known intrinsic dimension. (ii) A
+bounded/unbounded split Pareto-dominating every weighted-loss setting that
+forecasts at all, at matched parameters, wall clock and seeds. (iii) A negative
+result constraining this: the dominance does not survive a $10\times$ baseline
+budget. (iv) A bounded-shared-latent control isolating which ingredient buys
+what.
 
 \section{Method}
 
 \paragraph{Objects.}
-An observation is $x_t \in \mathbb{R}^{n}$. Five learned maps plus a
-forecaster:
-\begin{equation*}
-\begin{aligned}
-E &: \mathbb{R}^{n}\!\to\!\mathbb{R}^{n}, & f &: \mathbb{R}^{n}\!\to\!\mathbb{R}^{k}, &
-r &: \mathbb{R}^{n}\!\to\![0,1]^{a\times b},\\
-m &: \mathbb{R}^{k}\!\to\![0,1]^{a\times b}, & g &: \mathbb{R}^{k}\!\to\!\mathbb{R}^{k}, &
-D &: [0,1]^{a\times b}\!\to\!\mathbb{R}^{n}.
-\end{aligned}
-\end{equation*}
-Write $h_t = E(x_t)$, $b_t = f(h_t)$, $C_t = m(b_t)$. Here $b$ is the
-\emph{unbounded} carrier ($k=3$) and $C$ the \emph{bounded} carrier
-($a=b=8$). The reconstruction path is $x_t \to h_t \to b_t \to C_t \to
-\hat{x}_t$; the forecast path steps only $b$ and recomputes $C$ from it,
-$b_{t+1}=g(b_t)$, $C_{t+1}=m(b_{t+1})$, $\hat{x}_{t+1}=D(C_{t+1})$.
+For $x_t\in\mathbb{R}^{n}$ write $h_t=E(x_t)\in\mathbb{R}^{n}$,
+$b_t=f(h_t)\in\mathbb{R}^{k}$ and $C_t=m(b_t)\in[0,1]^{a\times b}$, with a
+decoder $D:[0,1]^{a\times b}\to\mathbb{R}^{n}$, a forecaster
+$g:\mathbb{R}^{k}\to\mathbb{R}^{k}$, and a teacher
+$r:\mathbb{R}^{n}\to[0,1]^{a\times b}$. Here $b$ is the \emph{unbounded}
+carrier ($k=3$) and $C$ the \emph{bounded} one ($a=b=8$). Reconstruction runs
+$x_t\to h_t\to b_t\to C_t\to\hat{x}_t$; forecasting steps only $b$ and
+recomputes $C$ from it: $b_{t+1}=g(b_t)$, $C_{t+1}=m(b_{t+1})$,
+$\hat{x}_{t+1}=D(C_{t+1})$.
 
 \paragraph{Consistency.}
-The chain is only coherent if the indirect route to the bounded latent agrees
-with the direct one, $m(f(h_t)) \approx r(h_t)$. Since $r$ sees all $n$
-dimensions and $m$ sees only $k$, enforcing agreement forces $f$ to retain
-everything $C$ needs while compressing $30\to3$. $r$ is a training-only
-teacher and never runs at inference.
+The chain is coherent only if the indirect route to the bounded latent agrees
+with the direct one, $m(f(h_t)) \approx r(h_t)$. As $r$ sees all $n$ dimensions
+and $m$ only $k$, agreement forces $f$ to retain everything $C$ needs while
+compressing $30\to3$. $r$ is a training-only teacher, never run at inference.
 
 \paragraph{Two stages, and why the split is exact.}
 Stage 1 trains $\theta_A=\{E,f,m,r,D\}$ on single timesteps:
@@ -117,11 +103,8 @@ $\mathcal{L}_A = \|D(m(f(E(x_t)))) - x_t\|^2 + \lambda\|m(f(E(x_t))) -
 r(E(x_t))\|_F^2$. Stage 2 \emph{freezes} $\theta_A$, runs the frozen encoder
 over every training timestamp to obtain the series $b_t$, and trains $g$ alone,
 free-running, entirely in $b$-space:
-\begin{equation}
-\mathcal{L}_B(\theta_g) = \tfrac{1}{H}\sum_{\tau=1}^{H}
-\big\|\hat{b}_{t+\tau} - b_{t+\tau}\big\|^2 ,
-\qquad \hat{b}_{t+\tau} = g^{\circ\tau}(b_t).
-\end{equation}
+$\mathcal{L}_B(\theta_g) = \tfrac{1}{H}\sum_{\tau=1}^{H}\|\hat{b}_{t+\tau} -
+b_{t+\tau}\|^2$ with $\hat{b}_{t+\tau} = g^{\circ\tau}(b_t)$.
 Neither $m$ nor $D$ appears in $\mathcal{L}_B$, so
 $\partial\mathcal{L}_B/\partial\theta_A \equiv 0$: improving the forecast
 \emph{cannot} degrade reconstruction. This is the decoupling, and it is an
@@ -130,52 +113,67 @@ $\partial\mathcal{L}_{\mathrm{fcst}}/\partial\theta_{\mathrm{enc}} \neq 0$ and
 $\phi$ merely chooses which objective loses.
 
 \paragraph{Boundedness gives unconditional stability.}
-$m$ ends in a sigmoid, so $C_{t+\tau}\in[0,1]^{a\times b}$ by construction for
-any input. $D$ is continuous on that compact set, hence
-$\|\hat{x}_{t+\tau}\| \le \sup_{C\in[0,1]^{a\times b}}\|D(C)\| < \infty$ for
-all $\tau$, \emph{independently of} $\hat{b}_{t+\tau}$. However far the
-unbounded carrier drifts, the decoded trajectory cannot leave a bounded set:
-error saturates instead of exploding. This costs zero parameters.
+$m$ ends in a sigmoid, so $C_{t+\tau}\in[0,1]^{a\times b}$ by construction. $D$
+is continuous on that compact set, hence $\|\hat{x}_{t+\tau}\| \le
+\sup_{C}\|D(C)\| < \infty$ for all $\tau$, \emph{independently of}
+$\hat{b}_{t+\tau}$: however far the unbounded carrier drifts, the decoded
+trajectory cannot leave a bounded set, so error saturates instead of exploding.
+This costs zero parameters.
 
 \section{Experimental setup}
 
 \paragraph{Data.}
-Lorenz-63 \citep{lorenz} at $dt=0.01$, lifted through a frozen random
-$\tanh$ map to $n=30$ channels and corrupted with Gaussian noise at $5\%$ of
-each channel's spread. True intrinsic dimension is 3, so $k$ is a probe rather
-than a hyperparameter. Training pools 8 independent trajectories, each split
-$70/15/15$ chronologically; 32 further trajectories are held out entirely,
-never split and never seen in training. Every standardisation constant is fit
-on the pooled training portion only. The reconstruction floor is
-\emph{measured} from the realised noise draw in the final standardised scale
-($0.002492$) rather than assumed as $\mathrm{noise}^2$.
+Lorenz-63 \citep{lorenz} at $dt=0.01$, lifted through a frozen random $\tanh$
+map to $n=30$ channels with Gaussian noise at $5\%$ of each channel's spread.
+True intrinsic dimension is 3, so $k$ is a probe, not a hyperparameter. Training
+pools 8 independent trajectories, each split $70/15/15$ chronologically; 32
+further trajectories are held out entirely. Every standardisation constant is
+fit on the pooled training portion only, and the reconstruction floor is
+\emph{measured} from the realised noise draw ($0.002492$) rather than assumed
+as $\mathrm{noise}^2$.
 
 \paragraph{Baselines.}
-(B) the weighted-loss AE+GRU, $\phi$ swept over $\{0,0.1,0.25,0.5,0.75,0.9,1\}$,
-16-d shared latent; (D) the same construction with its \emph{shared} latent
-sigmoid-bounded and kept bounded through rollout by a residual step in logit
-space --- the control that holds boundedness fixed and removes the split;
+(B) weighted-loss AE+GRU, $\phi\in\{0,0.1,0.25,0.5,0.75,0.9,1\}$, 16-d shared
+latent; (D) the same with its \emph{shared} latent sigmoid-bounded through
+rollout --- the control holding boundedness fixed while removing the split;
 (C) a physics-informed AE whose 3-d latent is calibrated to true Lorenz
-coordinates and rolled out by RK4 on the known equations, with a misspecified
-$\rho=26$ variant; plus persistence and climatology.
+coordinates and rolled out by RK4 on the known equations, plus a misspecified
+$\rho=26$ variant; and persistence/climatology.
 
 \paragraph{Protocol.}
-Every model gets \textbf{124{,}482 trainable parameters and 120\,s of wall
-clock on one pinned CPU thread}. Ours, the PINN, $\phi\in\{0.1,0.25,0.5\}$ and
-model D run 3 seeds; remaining $\phi$ settings run 1. We report reconstruction
-MSE relative to the measured floor; valid prediction time (VPT, the lead time
-at which normalised error first crosses $0.4$, in Lyapunov times
-\citep{vlachas}); normalised error at 5 Lyapunov times; and \emph{divergence},
-the fraction of rollouts leaving the training bounding box.
+Every model gets \textbf{124{,}482 trainable parameters and 120\,s of wall clock
+on one pinned CPU thread}. Ours, the PINN, $\phi\in\{0.1,0.25,0.5\}$ and model D
+run 3 seeds; remaining $\phi$ settings run 1. We report reconstruction MSE over
+the measured floor; VPT (lead time at which normalised error first crosses
+$0.4$, in Lyapunov times \citep{vlachas}); error at 5 Lyapunov times; and
+\emph{divergence}, the fraction of rollouts leaving the training box.
 
 \section{Results}
 
+\begin{figure}[t]
+\centering
+\begin{minipage}[t]{0.45\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{figs/paper_pareto.png}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.45\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{figs/paper_horizon.png}
+\end{minipage}
+\caption{\textbf{Left:} the $\phi$ frontier (grey) is nearly flat --- paying
+reconstruction buys almost no forecast --- and the split (star) sits outside the
+region it reaches. The $10\times$-budget point (pink) is the counterpoint:
+the frontier is not compute-invariant. \textbf{Right:} error vs lead time, log
+scale. Unbounded models climb without limit; every bounded decode path
+saturates at climatology ($\approx1$).}
+\label{fig:main}
+\end{figure}
+
 \begin{table}[t]
-\caption{Matched parameters, matched wall clock, matched seeds where marked.
-$\times$floor is reconstruction MSE over the measured noise floor (lower
-better); VPT in Lyapunov times (higher better); divergence is the fraction of
-rollouts leaving the training range. The $10\times$ budget row is the
-\emph{off-protocol} control (see ``The negative result), not a matched comparison.}
+\caption{Matched parameters, wall clock and seeds where marked. $\times$floor is
+reconstruction MSE over the measured floor (lower better); divergence is the
+fraction of rollouts leaving the training range. The $10\times$ row is an
+off-protocol control, not a matched comparison. Full table in Appendix~A.}
 \label{tab:main}
 \centering
 \small
@@ -187,14 +185,10 @@ Model & seeds & $\times$floor $\downarrow$ & VPT $\uparrow$ & NRMSE@5LT $\downar
 \midrule
 $\phi{=}0$ (no forecasting) & 1 & 1.01 & 0.027 & 30.6 & 100\% \\
 $\phi{=}0.1$                & 3 & 1.08 & 0.323\,$\pm$\,0.011 & 15.5 & 100\% \\
-$\phi{=}0.25$               & 3 & 1.15 & 0.320\,$\pm$\,0.015 & 14.9 & 100\% \\
 $\phi{=}0.5$                & 3 & 1.32 & 0.326\,$\pm$\,0.013 & 15.8 & 100\% \\
-$\phi{=}0.9$                & 1 & 2.01 & 0.335 & 11.1 & 100\% \\
-$\phi{=}1$                  & 1 & 3.79 & 0.326 & 13.4 & 100\% \\
 \midrule
 AEGRU+sigmoid (D)           & 3 & 2.28 & 0.329\,$\pm$\,0.004 & 1.28 & 1.6\% \\
 PINN (true physics)         & 3 & 1.87 & 0.378\,$\pm$\,0.019 & 1.19 & 26\% \\
-PINN ($\rho{=}26$)          & 1 & 2.50 & 0.245 & 1.27 & 0\% \\
 persistence / climatology   & -- & -- & 0.036 / 0.000 & 1.37 / 1.00 & 0\% \\
 \midrule
 \emph{$\phi{=}0.25$, $10\times$ budget} & 1 & \emph{0.99} & \emph{0.526} & \emph{1.43} & \emph{22\%} \\
@@ -203,104 +197,84 @@ persistence / climatology   & -- & -- & 0.036 / 0.000 & 1.37 / 1.00 & 0\% \\
 \end{table}
 
 \paragraph{At matched compute, the split dominates.}
-Table~\ref{tab:main} shows the split reaching $1.06\times$ the floor at VPT
-$0.489$. Every $\phi$ setting that forecasts at all is worse on \emph{both}
-axes simultaneously: the best of them reaches VPT $0.335$, and the only setting
-with better reconstruction ($\phi{=}0$, $1.01\times$) has VPT $0.027$, below
-persistence --- it does not forecast. So the split is not a different point on
-the knob's curve; it is outside the region the knob reaches. The knob's own
-curve is also nearly flat in VPT ($0.320$--$0.335$ across
-$\phi\in[0.1,1]$) while reconstruction degrades by $3.8\times$, i.e. within
-this family, paying reconstruction buys almost no forecast.
+The split reaches $1.06\times$ the floor at VPT $0.489$. Every $\phi$ that
+forecasts at all is worse on \emph{both} axes at once: the best reaches $0.335$
+($\phi{=}0.9$, App.~A), and the only one reconstructing better ($\phi{=}0$,
+$1.01\times$) has VPT $0.027$, below persistence --- it does not forecast. The
+split is thus not another point on the knob's curve but outside the region it
+reaches. That curve is itself nearly flat ($0.320$--$0.335$ across
+$\phi\in[0.1,1]$) while reconstruction degrades $3.8\times$: paying
+reconstruction buys almost no forecast here.
 
 \paragraph{The negative result: this is compute-dependent.}
 \label{sec:budget}
-Held at 120\,s, the above reads as dissolution. It is not that simple. Given
-$10\times$ the wall clock, $\phi{=}0.25$ reaches VPT $0.526$ at $0.99\times$
-the floor --- better than the split on both headline axes. The shift
-($\Delta$VPT $=0.205$) is an order of magnitude larger than the 3-seed spread
-of the $1\times$ run ($\sigma=0.015$), so the weighted-loss family is
-\emph{measurably undertrained} at the matched budget, not frontier-limited
-there. We report this prominently because it bounds the claim: a
-compute-matched Pareto comparison, the standard protocol in this literature,
-can invert under a compute rescaling. Any claim of the form ``architecture $X$
-dissolves the tradeoff,'' ours included, is only as strong as the budget it was
-measured at.
+Held at 120\,s the above reads as dissolution; it is not that simple. Given
+$10\times$ the wall clock, $\phi{=}0.25$ reaches VPT $0.526$ at $0.99\times$ the
+floor --- better than the split on both headline axes. The shift ($\Delta$VPT
+$=0.205$) is an order of magnitude larger than the $1\times$ run's 3-seed spread
+($\sigma=0.015$), so the family is \emph{measurably undertrained} at that
+budget, not frontier-limited there. This bounds the claim: a compute-matched
+Pareto comparison, the standard protocol here, can invert under a compute
+rescaling. Any claim that architecture $X$ dissolves the tradeoff, ours
+included, is only as strong as the budget it was measured at.
 
 \paragraph{What does not follow compute: stability.}
 Divergence separates the models in a way compute does not fix. Every unbounded
 baseline leaves the training range on $100\%$ of rollouts at $1\times$; at
-$10\times$ that only falls to $22\%$. The split is at $0\%$, and its
-error at 5 Lyapunov times is $1.18$ --- at the climatology level $1.00$, i.e.
-saturating rather than exploding, exactly as the boundedness argument predicts.
-This is a guarantee from the function class, not a quantity that better
-optimisation can supply.
+$10\times$ that falls only to $22\%$. The split is at $0\%$, with error at 5
+Lyapunov times of $1.18$ --- the climatology level, i.e. saturating rather than
+exploding, as the boundedness argument predicts. That is a guarantee from the
+function class, not something better optimisation supplies.
 
 \paragraph{Which ingredient buys what.}
 Model D holds boundedness fixed and removes the split. It reaches divergence
 $1.6\%$ --- essentially the split's stability --- but reconstruction
-$2.28\times$ floor and VPT $0.329$, no better than the knob. So the two
-ingredients buy different things: \textbf{boundedness buys stability;
-separating the carriers buys the reconstruction and forecast quality.} Neither
-alone reproduces the result, which is the cleanest evidence we have that the
-split is doing real work rather than acting as a reparameterised $\phi$.
+$2.28\times$ floor and VPT $0.329$, no better than the knob. The two ingredients
+buy different things: \textbf{boundedness buys stability; separating the
+carriers buys the reconstruction and forecast quality.} Neither alone reproduces
+the result --- our cleanest evidence that the split does real work rather than
+acting as a reparameterised $\phi$.
 
-\paragraph{Two-stage schedule.}
-Training the identical modules end-to-end with the forecast objective included
-degrades reconstruction $4.4\times$ ($0.0026\to0.0117$) and VPT to $0.372$.
-The architecture alone is not sufficient; the schedule that makes
-$\partial\mathcal{L}_B/\partial\theta_A=0$ true is load-bearing.
-
-\paragraph{Noise.}
-Re-running the headline comparison at observation noise $0.15$ and $0.30$
-(1 seed), the split leads the best $\phi$ at every level --- gaps
-$+0.163$, $+0.290$, $+0.208$ in VPT --- but the gap is \emph{not monotonic},
-peaking at $0.15$. We report the sequence rather than a direction. Divergence
-for the split stays at $0\%$ throughout.
-
-\paragraph{Physics baseline.}
-The PINN needed a fix to be a fair comparator: its decoder reads the raw latent,
-never the physically-calibrated coordinates, so nothing constrained that
-latent's scale and a purely \emph{relative} physics residual was satisfiable in
-a self-consistent but physically wrong coordinate system. Recalibrating the
-latent-to-state affine by least squares each epoch moved its forecast loss from
-$17.6$ (rising during training) to $0.015$ and its state-recovery $R^2$ from
-$[0.64,0.70,0.10]$ to $[0.996,0.989,0.981]$. Post-fix it is the strongest
-baseline on VPT ($0.378$) and has the best 50-Lyapunov-time attractor fidelity
-in the comparison (Wasserstein $0.068$ vs the split's $0.170$).
+\paragraph{Schedule, noise, physics.}
+End-to-end training of the same modules degrades reconstruction $4.4\times$ and
+VPT to $0.372$: the schedule, not just the architecture, is load-bearing. At
+noise $0.15$/$0.30$ (1 seed) the split still leads the best $\phi$ --- VPT gaps
+$+0.163$, $+0.290$, $+0.208$ --- but \emph{not monotonically}, peaking at
+$0.15$; we report the sequence, not a direction. The PINN needed a repair to be
+a fair comparator: its decoder reads the uncalibrated latent, so a
+\emph{relative} physics residual was satisfiable in physically wrong
+coordinates. Recalibrating each epoch moved its forecast loss $17.6\to0.015$ and
+its state-recovery $R^2$ from $[0.64,0.70,0.10]$ to $[0.996,0.989,0.981]$;
+post-fix it has the best 50-Lyapunov-time attractor fidelity here (Wasserstein
+$0.068$ vs the split's $0.170$). Appendices~B--D.
 
 \section{Limitations}
 
-\textbf{One system.} All results are Lorenz-63 with one lift; the cross-domain
-phenomenon claim motivating this work is not tested here.
-\textbf{Compute-dependence is unresolved.} We did not run $10\times$ with 3
-seeds, locate the crossover, or give the split $10\times$.
-\textbf{Fixed capacity.} The bounded carrier is a fixed $8\times8$ grid; the
-adaptive-precision mechanism motivating the broader hypothesis is untested.
-\textbf{Uneven seeds.} Single-seed rows report $\sigma=0$ because $n=1$, not
-because they are stable.
-\textbf{A floor artifact.} $\phi{=}0.25$ at $10\times$ sits at $0.99\times$ the
-measured floor; a capacity-matched control ($\mathrm{latent}{=}3$) moves cleanly
-above it, indicating a wide unregularised latent exploiting cross-channel
-redundancy rather than a leak.
-\textbf{Constructed baselines.} The $\phi$ sweep and model D are the balancing
-recipe in its plainest form, not named published methods.
+\textbf{One system:} Lorenz-63, one lift; the cross-domain phenomenon claim
+motivating this work is untested here. \textbf{Compute-dependence unresolved:}
+we did not run $10\times$ with 3 seeds, locate the crossover, or give the split
+$10\times$. \textbf{Fixed capacity:} the bounded carrier is a fixed $8\times8$
+grid, so the adaptive-precision mechanism motivating the broader hypothesis is
+untested. \textbf{Uneven seeds:} single-seed rows report $\sigma=0$ because
+$n=1$. \textbf{A floor artifact:} $\phi{=}0.25$ at $10\times$ sits at
+$0.99\times$ the measured floor; a capacity-matched control
+($\mathrm{latent}{=}3$) clears it, indicating a wide unregularised latent
+exploiting cross-channel redundancy rather than a leak. \textbf{Constructed
+baselines:} the $\phi$ sweep and model D are the balancing recipe in its
+plainest form, not named published methods.
 
 \section{Conclusion}
 
 At matched parameters, wall clock and seeds, separating a bounded
-decoder-facing carrier from an unbounded forecaster-facing carrier reaches an
-operating point no setting of the weighted-loss knob reaches, and the knob's own
-curve is nearly flat --- within that family, sacrificing reconstruction buys
-almost no forecast. That is evidence the tradeoff, as practised, is an
-operating point rather than a frontier. But the advantage is compute-dependent,
-and we show it inverting at $10\times$ budget. The property that does not
-depend on compute is stability: bounded decoding gives $0\%$ divergence by
-construction, where every unbounded baseline diverges on every rollout. We
-therefore read the honest conclusion as narrower than ``the tradeoff
-dissolves'': it is not a single fixed frontier, compute-matched comparison
-alone cannot settle whether it is dissolvable, and the reliability half of the
-problem is separable from the accuracy half.
+decoder-facing carrier from an unbounded forecaster-facing one reaches an
+operating point no setting of the knob reaches, on a curve that is itself nearly
+flat. But that advantage is compute-dependent: we show it inverting at
+$10\times$ budget. What does not depend on compute is stability --- bounded
+decoding gives $0\%$ divergence by construction where every unbounded baseline
+diverges on every rollout. The honest conclusion is narrower than ``the tradeoff
+dissolves'': it is not a single fixed frontier, compute-matched comparison alone
+cannot settle whether it is dissolvable, and the reliability half of the problem
+is separable from the accuracy half.
 
 \bibliographystyle{plainnat}
 \begin{thebibliography}{99}
@@ -410,6 +384,19 @@ climatology                 & -- & -- & --    & --     & 0.000 & 0.000 \\
 \end{tabular}
 \end{table}
 
+\begin{figure}[h]
+\centering
+\begin{minipage}[t]{0.45\textwidth}
+  \centering\includegraphics[width=\linewidth]{figs/recon_bar.png}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.45\textwidth}
+  \centering\includegraphics[width=\linewidth]{figs/vpt_bar.png}
+\end{minipage}
+\caption{The two headline axes as bar charts. Left: reconstruction against the
+measured noise floor (dashed). Right: valid prediction time, error bars are the
+standard deviation over seeds --- bars without one are $n=1$.}
+\end{figure}
+
 Note the epochs column: the $\phi$ models complete $\sim$2 epochs against
 Ours' 16 in the same wall clock, because the joint model re-encodes full
 sequences every step while stage~1 trains on single timesteps and stage~2 on
@@ -417,9 +404,13 @@ precomputed latents. Equal seconds is not equal gradient steps; this is the
 mechanism behind the budget result of \S\ref{sec:budget}, and it is
 a property of the architectures, not a protocol error.
 
+\clearpage
 \section{Long-horizon attractor statistics (50 Lyapunov times)}
 
 \begin{table}[h]
+\caption{Attractor statistics after 5{,}500 free-running steps. Wasserstein is
+the mean 1-D distance between per-channel marginals of the rollout and of the
+truth (lower better).}
 \centering
 \small
 \begin{tabular}{lcccc}
@@ -442,9 +433,38 @@ After 5{,}500 blind steps the split still traces the attractor
 of magnitude. The repaired PINN is best on this axis, as expected of a model
 handed the exact equations.
 
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{figs/attractor50.png}
+\caption{Attractor after 50 Lyapunov times (5{,}500 free-running steps), in
+probed state space. Truth first. The split and both PINNs still trace a
+recognisable butterfly; the weighted-loss settings have left the attractor
+entirely.}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{figs/invariant.png}
+\caption{Invariant measure per state coordinate at 50 Lyapunov times --- the
+distribution the Wasserstein column scores. Curves that collapse to a spike, or
+sit far off truth, correspond to rollouts that have diverged.}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{figs/return_map.png}
+\caption{Lorenz return map (successive maxima of $z$) after 50 Lyapunov times.
+The true system traces a thin tent; a model with the right climate but the
+wrong geometry produces a visibly fattened or collapsed one.}
+\end{figure}
+
+
+\clearpage
 \section{Noise sweep}
 
 \begin{table}[h]
+\caption{Headline comparison re-run at three observation-noise levels; one seed
+at $0.15$ and $0.30$.}
 \centering
 \small
 \begin{tabular}{lcccc}
@@ -473,6 +493,43 @@ redundancy lets a wide latent recover the clean signal slightly better than the
 per-channel floor implies. It affects all models equally and does not change
 the ordering.
 
+\clearpage
+\section{Boundedness audit and training cost}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\textwidth]{figs/bounded_audit.png}
+\caption{Left: distribution of bounded-latent entries over a 50-Lyapunov-time
+rollout --- every value inside $[0,1]$, as the construction guarantees. Right:
+the unbounded carrier's magnitude over the same rollout. The bound holds on $C$
+regardless of what $b$ does, which is the mechanism behind the $0\%$ divergence
+in Table~\ref{tab:main}.}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.92\textwidth]{figs/C_rollout.png}
+\caption{The bounded latent $C_t$ ($8\times8$) sampled through a
+50-Lyapunov-time rollout. It neither saturates to the rails nor escapes the
+box.}
+\end{figure}
+
+\begin{figure}[h]
+\centering
+\begin{minipage}[t]{0.49\textwidth}
+  \centering\includegraphics[width=\linewidth]{figs/time_to_quality.png}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.49\textwidth}
+  \centering\includegraphics[width=\linewidth]{figs/ablation_pareto.png}
+\end{minipage}
+\caption{Left: validation reconstruction against wall clock --- the split
+reaches $2\times$ the noise floor in $24.8$\,s against $63$--$120$\,s for the
+baselines, because stage~2 trains on precomputed latents with no decoder in the
+graph. Right: the two-stage schedule against end-to-end training of the
+identical modules, placed on the same frontier.}
+\end{figure}
+
+\clearpage
 \section{Reproducibility}
 
 Code, data generator and the executed notebook (all outputs stored) accompany
