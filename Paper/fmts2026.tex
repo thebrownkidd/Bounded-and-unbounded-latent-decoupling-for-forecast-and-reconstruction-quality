@@ -52,12 +52,18 @@ weighted loss, $\mathcal{L} = (1-\phi)\mathcal{L}_{\mathrm{rec}} +
 \phi\mathcal{L}_{\mathrm{fcst}}$, with $\phi$ tuned per dataset. Coupled
 Attention Networks \citep{coupledattn} call their weights ``a tradeoff between
 the prediction and reconstruction models''; CAAE \citep{caae} names the
-``objective mismatch between training for reconstruction fidelity and [the
-downstream task]''; a cluster of reconstruction-plus-prediction hybrids follows
-the same recipe \citep{memaae,hyvae}; and SSP \citep{ssp} pursues the same
-separation by spectral truncation, ``decoupling reconstruction fidelity from
-rollout regularity.'' Across all of them the tradeoff is something to
-\emph{tune}. Almost nobody asks whether the tuning is necessary.
+``objective mismatch between training for reconstruction fidelity and testing
+for discriminative decisions''; reconstruction-plus-prediction hybrids fuse
+both objectives onto one shared latent, some with explicit weights
+\citep{memaae}, some by plainly summing the two losses \citep{hyvae}; and SSP
+\citep{ssp} pursues the same separation by spectral truncation, ``decoupling
+reconstruction fidelity from rollout regularity.'' Across all of them the
+tradeoff is something to \emph{tune}. Almost nobody asks whether the tuning is
+necessary. The ingredients exist separately --- bounded latents are routine in
+representation learning \citep{fsq}, and Koopman-style forecasters constrain
+the latent \emph{dynamics} to buy long-horizon stability \citep{azencot,koopa}
+--- but neither line splits the two objectives across separate carriers, and
+the Koopman forecasters still run a single latent through both.
 
 \paragraph{What we are not claiming.}
 Rate--distortion theory \citep{shannon,berger} proves a frontier between rate
@@ -81,14 +87,23 @@ what.
 \section{Method}
 
 \paragraph{Objects.}
-For $x_t\in\mathbb{R}^{n}$ write $h_t=E(x_t)\in\mathbb{R}^{n}$,
-$b_t=f(h_t)\in\mathbb{R}^{k}$ and $C_t=m(b_t)\in[0,1]^{a\times b}$, with a
-decoder $D:[0,1]^{a\times b}\to\mathbb{R}^{n}$, a forecaster
-$g:\mathbb{R}^{k}\to\mathbb{R}^{k}$, and a teacher
-$r:\mathbb{R}^{n}\to[0,1]^{a\times b}$. Here $b$ is the \emph{unbounded}
+For $x_t\in\mathbb{R}^{n}$ write 
+$h_t=E(x_t)\in\mathbb{R}^{n}$,
+
+$b_t=f(h_t)\in\mathbb{R}^{k}$ and $C_t=m(b_t)\in[0,1]^{a\times b}$
+with a decoder 
+$D:[0,1]^{a\times b}\to\mathbb{R}^{n}$
+a forecaster
+
+$g:\mathbb{R}^{k}\to\mathbb{R}^{k}$
+and a teacher
+
+$r:\mathbb{R}^{n}\to[0,1]^{a\times b}$
+Here $b$ is the \emph{unbounded}
 carrier ($k=3$) and $C$ the \emph{bounded} one ($a=b=8$). Reconstruction runs
 $x_t\to h_t\to b_t\to C_t\to\hat{x}_t$; forecasting steps only $b$ and
-recomputes $C$ from it: $b_{t+1}=g(b_t)$, $C_{t+1}=m(b_{t+1})$,
+recomputes $C$ from it: 
+$b_{t+1}=g(b_t)$, $C_{t+1}=m(b_{t+1})$,
 $\hat{x}_{t+1}=D(C_{t+1})$.
 
 \paragraph{Consistency.}
@@ -98,19 +113,26 @@ and $m$ only $k$, agreement forces $f$ to retain everything $C$ needs while
 compressing $30\to3$. $r$ is a training-only teacher, never run at inference.
 
 \paragraph{Two stages, and why the split is exact.}
-Stage 1 trains $\theta_A=\{E,f,m,r,D\}$ on single timesteps:
+Stage 1 trains 
+$\theta_A=\{E,f,m,r,D\}$ on single timesteps:
+
 $\mathcal{L}_A = \|D(m(f(E(x_t)))) - x_t\|^2 + \lambda\|m(f(E(x_t))) -
-r(E(x_t))\|_F^2$. Stage 2 \emph{freezes} $\theta_A$, runs the frozen encoder
-over every training timestamp to obtain the series $b_t$, and trains $g$ alone,
+r(E(x_t))\|_F^2$
+Stage 2 \emph{freezes} $\theta_A$, runs the frozen encoder over every training timestamp to obtain the series $b_t$, and trains $g$ alone,
 free-running, entirely in $b$-space:
+
 $\mathcal{L}_B(\theta_g) = \tfrac{1}{H}\sum_{\tau=1}^{H}\|\hat{b}_{t+\tau} -
-b_{t+\tau}\|^2$ with $\hat{b}_{t+\tau} = g^{\circ\tau}(b_t)$.
+b_{t+\tau}\|^2$ with $\hat{b}_{t+\tau} = g^{\circ\tau}(b_t)$
+
 Neither $m$ nor $D$ appears in $\mathcal{L}_B$, so
+
 $\partial\mathcal{L}_B/\partial\theta_A \equiv 0$: improving the forecast
 \emph{cannot} degrade reconstruction. This is the decoupling, and it is an
 identity rather than a penalty. Contrast the weighted loss, where
+
 $\partial\mathcal{L}_{\mathrm{fcst}}/\partial\theta_{\mathrm{enc}} \neq 0$ and
-$\phi$ merely chooses which objective loses.
+$\phi$ 
+merely chooses which objective loses.
 
 \paragraph{Boundedness gives unconditional stability.}
 $m$ ends in a sigmoid, so $C_{t+\tau}\in[0,1]^{a\times b}$ by construction. $D$
@@ -254,8 +276,8 @@ $0.068$ vs the split's $0.170$). Appendices~B--D.
 motivating this work is untested here. \textbf{Compute-dependence unresolved:}
 we did not run $10\times$ with 3 seeds, locate the crossover, or give the split
 $10\times$. \textbf{Fixed capacity:} the bounded carrier is a fixed $8\times8$
-grid, so the adaptive-precision mechanism motivating the broader hypothesis is
-untested. \textbf{Uneven seeds:} single-seed rows report $\sigma=0$ because
+grid and we never varied it, so how much of the result rests on that
+particular size is unknown. \textbf{Uneven seeds:} single-seed rows report $\sigma=0$ because
 $n=1$. \textbf{A floor artifact:} $\phi{=}0.25$ at $10\times$ sits at
 $0.99\times$ the measured floor; a capacity-matched control
 ($\mathrm{latent}{=}3$) clears it, indicating a wide unregularised latent
@@ -280,75 +302,85 @@ is separable from the accuracy half.
 \begin{thebibliography}{99}
 
 \bibitem[Azencot et al.(2020)]{azencot}
-O.~Azencot, N.~B. Erichson, V.~Lin, and M.~Mahoney.
+O.~Azencot, N.~B. Erichson, V.~Lin, and M.~W. Mahoney.
 \newblock Forecasting sequential data using consistent Koopman autoencoders.
-\newblock In \emph{ICML}, 2020.
+\newblock In \emph{Proceedings of the 37th International Conference on Machine
+  Learning (ICML)}, pages 475--485, 2020.
 
 \bibitem[Berger(1971)]{berger}
 T.~Berger.
-\newblock \emph{Rate Distortion Theory: A Mathematical Basis for Data Compression}.
-\newblock Prentice-Hall, 1971.
+\newblock \emph{Rate Distortion Theory: A Mathematical Basis for Data
+  Compression}.
+\newblock Prentice-Hall, Englewood Cliffs, NJ, 1971.
 
-\bibitem[Durkan et al.(2019)]{nsf}
-C.~Durkan, A.~Bekasov, I.~Murray, and G.~Papamakarios.
-\newblock Neural spline flows.
-\newblock In \emph{NeurIPS}, 2019.
-
-\bibitem[Lee et al.(2022)]{rqvae}
-D.~Lee, C.~Kim, S.~Kim, M.~Cho, and W.-S. Han.
-\newblock Autoregressive image generation using residual quantization.
-\newblock In \emph{CVPR}, 2022.
+\bibitem[Cai et al.(2023)]{hyvae}
+B.~Cai, S.~Yang, L.~Gao, and Y.~Xiang.
+\newblock Hybrid variational autoencoder for time series forecasting.
+\newblock \emph{Knowledge-Based Systems}, 281:111079, 2023.
+\newblock arXiv:2303.07048.
 
 \bibitem[Liu et al.(2023)]{koopa}
 Y.~Liu, C.~Li, J.~Wang, and M.~Long.
-\newblock Koopa: Learning non-stationary time series dynamics with Koopman predictors.
-\newblock In \emph{NeurIPS}, 2023.
+\newblock Koopa: Learning non-stationary time series dynamics with Koopman
+  predictors.
+\newblock In \emph{Advances in Neural Information Processing Systems (NeurIPS)},
+  2023.
+\newblock arXiv:2305.18803.
 
 \bibitem[Lorenz(1963)]{lorenz}
 E.~N. Lorenz.
 \newblock Deterministic nonperiodic flow.
 \newblock \emph{Journal of the Atmospheric Sciences}, 20(2):130--141, 1963.
 
+\bibitem[Lu et al.(2026)]{ssp}
+X.~Lu, Y.~Yuan, and J.~Shi.
+\newblock Stable long-horizon PDE forecasting via latent structured spectral
+  propagators.
+\newblock \emph{arXiv preprint arXiv:2605.10154}, 2026.
+
 \bibitem[Mentzer et al.(2024)]{fsq}
 F.~Mentzer, D.~Minnen, E.~Agustsson, and M.~Tschannen.
 \newblock Finite scalar quantization: VQ-VAE made simple.
-\newblock In \emph{ICLR}, 2024.
+\newblock In \emph{International Conference on Learning Representations (ICLR)},
+  2024.
+\newblock arXiv:2309.15505.
 
 \bibitem[Shannon(1959)]{shannon}
 C.~E. Shannon.
 \newblock Coding theorems for a discrete source with a fidelity criterion.
-\newblock \emph{IRE Nat. Conv. Rec.}, 4(142-163), 1959.
+\newblock \emph{IRE National Convention Record}, part 4, pages 142--163, 1959.
 
 \bibitem[Tishby et al.(2000)]{tishby}
 N.~Tishby, F.~C. Pereira, and W.~Bialek.
 \newblock The information bottleneck method.
-\newblock \emph{arXiv:physics/0004057}, 2000.
+\newblock \emph{arXiv preprint physics/0004057}, 2000.
 
 \bibitem[Vlachas et al.(2020)]{vlachas}
-P.~R. Vlachas, J.~Pathak, B.~R. Hunt, T.~P. Sapsis, M.~Girvan, E.~Ott, and P.~Koumoutsakos.
+P.~R. Vlachas, J.~Pathak, B.~R. Hunt, T.~P. Sapsis, M.~Girvan, E.~Ott, and
+  P.~Koumoutsakos.
 \newblock Backpropagation algorithms and reservoir computing in recurrent neural
   networks for the forecasting of complex spatiotemporal dynamics.
 \newblock \emph{Neural Networks}, 126:191--217, 2020.
 
-\bibitem[Anonymous(2026)]{ssp}
-Stable long-horizon PDE forecasting via latent structured spectral propagators.
-\newblock \emph{arXiv:2605.10154}, 2026.
+\bibitem[Xia et al.(2024)]{coupledattn}
+F.~Xia, X.~Chen, S.~Yu, M.~Hou, M.~Liu, and L.~You.
+\newblock Coupled attention networks for multivariate time series anomaly
+  detection.
+\newblock \emph{IEEE Transactions on Emerging Topics in Computing},
+  12:240--253, 2024.
+\newblock arXiv:2306.07114.
 
-\bibitem[CAAE(2026)]{caae}
-Contrastive adversarial autoencoder for multivariate time series.
+\bibitem[Xiao et al.(2021)]{memaae}
+Q.~Xiao, S.~Shao, and J.~Wang.
+\newblock Memory-augmented adversarial autoencoders for multivariate
+  time-series anomaly detection with deep reconstruction and prediction.
+\newblock \emph{arXiv preprint arXiv:2110.08306}, 2021.
+
+\bibitem[Xie et al.(2026)]{caae}
+X.~Xie, K.~Liu, Y.~Wang, M.~Wu, H.~Zhang, and T.~Wan.
+\newblock CAAE: Contrastive adversarial autoencoder for multivariate time
+  series anomaly detection.
 \newblock \emph{Pattern Recognition}, 2026.
-
-\bibitem[Coupled Attention(2023)]{coupledattn}
-Coupled attention networks for multivariate time series anomaly detection.
-\newblock 2023.
-
-\bibitem[MemAAE(2021)]{memaae}
-Memory-augmented adversarial autoencoders for multivariate time-series anomaly detection.
-\newblock 2021.
-
-\bibitem[HyVAE(2023)]{hyvae}
-Hybrid variational autoencoder for time series forecasting.
-\newblock 2023.
 
 \end{thebibliography}
 
