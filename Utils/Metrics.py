@@ -148,20 +148,20 @@ def ZMaxMap(z):
     return np.stack([m[:-1], m[1:]], axis=1) if len(m) > 1 else np.empty((0, 2))
 
 
-# -- Linear probe onto the true state -----------------------------------------
+# -- Affine coordinate map onto the true state --------------------------------
+#
+# Not a representation-quality metric: this is a plotting utility. States are
+# never in any loss, so the latent is only identified up to an arbitrary
+# rotation and scale; this affine fit absorbs that so a model's rollout can be
+# drawn in physical Lorenz coordinates (attractor plots, return maps,
+# invariant-measure histograms). Fit on TRAIN only.
 
-def FitProbe(Bt, S):
-    """Affine least-squares latent -> true Lorenz state. Fit on TRAIN only.
-
-    states is never in a loss, so the latent is only identified up to an
-    arbitrary rotation and scale; the probe absorbs that. It is linear, so a
-    nonlinear reparameterisation of the attractor is under-credited -- read a
-    low score as "not linearly decodable", not as "did not recover the state".
-    """
+def FitStateMap(Bt, S):
+    """Least-squares affine coordinate transform: latent -> true Lorenz state."""
     Design = np.concatenate([Bt, np.ones((len(Bt), 1))], axis=1)
     W, *_ = np.linalg.lstsq(Design, S, rcond=None)
     return W
 
 
-def ApplyProbe(W, Bt):
+def ApplyStateMap(W, Bt):
     return np.concatenate([Bt, np.ones((len(Bt), 1))], axis=1) @ W
