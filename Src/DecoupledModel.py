@@ -47,12 +47,18 @@ class DecoupledModel(nn.Module):
 
     # -- Stage A ---------------------------------------------------------
 
-    def forward(self, x):
-        """Autoencoder pass on (B, n). Returns (xhat, C, CTeach, b, h)."""
+    def forward(self, x, with_teacher=True):
+        """Autoencoder pass on (B, n). Returns (xhat, C, CTeach, b, h).
+
+        `with_teacher=False` skips R, the training-only consistency teacher
+        (never part of InferenceModules) -- used by Reconstruct, which is an
+        inference-path call and has no business paying for it.
+        """
         h = self.E(x)
         b = self.F(h)
         C = self.M(b)
-        return self.D(C), C, self.R(h), b, h
+        CTeach = self.R(h) if with_teacher else None
+        return self.D(C), C, CTeach, b, h
 
     def StageAModules(self):
         return [self.E, self.F, self.M, self.R, self.D]
@@ -70,59 +76,69 @@ class DecoupledModel(nn.Module):
 
     # -- Sequence helpers ------------------------------------------------
 
-    def EncodeSeq(self, xseq):
-        """(B, T, n) -> b (B, T, k) and C (B, T, a, b)."""
+    def EncodeSeq(self, xseq, want_c=True):
+        """(B, T, n) -> b (B, T, k) and C (B, T, a, b), or C=None if want_c=False.
+
+        Rollout/RolloutLatents only need the warm-up's b; C over the warm-up
+        window is never used there, so skipping it saves a M() call over the
+        whole (B*T) window on every rollout.
+        """
         B, T, n = xseq.shape
         h = self.E(xseq.reshape(B * T, n))
         b = self.F(h)
-        C = self.M(b)
-        return b.view(B, T, self.k), C.view(B, T, self.a, self.b)
+        C = self.M(b).view(B, T, self.a, self.b) if want_c else None
+        return b.view(B, T, self.k), C
 
     # -- Shared evaluation interface -------------------------------------
 
     def Reconstruct(self, window):
         """(B, L, n) -> (B, L, n). The Stage-A inference path, per timestep."""
         B, L, n = window.shape
-        xhat, _, _, _, _ = self.forward(window.reshape(B * L, n))
+        xhat, _, _, _, _ = self.forward(window.reshape(B * L, n), with_teacher=False)
         return xhat.view(B, L, n)
 
     def Rollout(self, window, horizon):
         """(B, L, n) warm-up -> (B, horizon, n) free-running forecast.
 
         Only b is stepped. C is recomputed from it each step by the static m,
-        so nothing but the GRU state carries across the rollout.
+        so nothing but the GRU state carries across the rollout. M and D are
+        applied once on the whole stacked b trajectory rather than once per
+        step, which is a pure reassociation (same computation, same result).
         """
-        b, _ = self.EncodeSeq(window)
+        b, _ = self.EncodeSeq(window, want_c=False)
 
         state = None
         if window.shape[1] > 1:
             _, state = self.G(b[:, :-1], None)
 
-        bcur, out = b[:, -1], []
+        bcur, bs = b[:, -1], []
         for _ in range(horizon):
             bcur, state = self.G.Step(bcur, state)
-            out.append(self.D(self.M(bcur)))
-        return torch.stack(out, dim=1)
+            bs.append(bcur)
+        B = torch.stack(bs, dim=1)                      # (B, horizon, k)
+        Bh, H, k = B.shape
+        out = self.D(self.M(B.reshape(Bh * H, k))).view(Bh, H, self.n)
+        return out
 
     def RolloutLatents(self, window, horizon):
         """As Rollout, but also returns the b and C trajectories.
 
         Needed for the boundedness audit (C must stay in [0, 1]) and for the
-        affine probe onto the true Lorenz state.
+        affine coordinate map onto the true Lorenz state. Same batched-decode
+        reassociation as Rollout.
         """
-        b, _ = self.EncodeSeq(window)
+        b, _ = self.EncodeSeq(window, want_c=False)
 
         state = None
         if window.shape[1] > 1:
             _, state = self.G(b[:, :-1], None)
 
-        bcur = b[:, -1]
-        xs, bs, cs = [], [], []
+        bcur, bs = b[:, -1], []
         for _ in range(horizon):
             bcur, state = self.G.Step(bcur, state)
-            cnext = self.M(bcur)
-            xs.append(self.D(cnext))
             bs.append(bcur)
-            cs.append(cnext)
-        return (torch.stack(xs, dim=1), torch.stack(bs, dim=1),
-                torch.stack(cs, dim=1))
+        Bt = torch.stack(bs, dim=1)                      # (B, horizon, k)
+        Bh, H, k = Bt.shape
+        Cs = self.M(Bt.reshape(Bh * H, k)).view(Bh, H, self.a, self.b)
+        Xs = self.D(Cs.reshape(Bh * H, self.a, self.b)).view(Bh, H, self.n)
+        return Xs, Bt, Cs
