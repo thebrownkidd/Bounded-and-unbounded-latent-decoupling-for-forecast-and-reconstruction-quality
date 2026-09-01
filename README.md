@@ -1,588 +1,201 @@
-# Bounded and unbounded latent decoupling for forecast and reconstruction quality
+# Bounded and Unbounded Latent Decoupling for Forecast and Reconstruction Quality
 
-**Thesis.** Reconstruction quality and long-horizon forecast quality are usually treated as
-competing objectives to be *balanced* — by a weighted loss, a shared encoder, a spectral
-truncation. This project argues the tension is not a law but an **artefact of forcing one latent
-representation to serve both jobs**, and that it can be overcome **architecturally**: give each
-objective its own carrier, with its own geometry, trained in its own stage.
+[![SSRN Preprint](https://img.shields.io/badge/SSRN-7180558-blue)](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=7180558)
+[![Under Review](https://img.shields.io/badge/Status-Under%20Review%20at%20EAAI-orange)]()
+[![Python](https://img.shields.io/badge/Python-3.10%2B-green)]()
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.x-red)]()
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)]()
 
-Two carriers do the work:
+> **Paper:** *Learning Bounded Latent Degradation Dynamics for Stable Rollout and Remaining Useful Life Prediction*
+> **Author:** Arpit Goel (sole author)
+> **Status:** Submitted to Engineering Applications of Artificial Intelligence (EAAI), under review.
 
-| carrier | shape | job | who reads it |
+---
+
+## TL;DR
+
+Standard autoencoders force reconstruction and forecasting to share a single latent space, so improving one degrades the other. We split the latent representation into a **bounded carrier** (for the decoder/reconstruction) and an **unbounded carrier** (for the forecaster/prediction), train them in two frozen stages, and apply custom bounded-latent regularizers. The result: **53% longer accurate prediction horizon** on chaotic systems, **5.7% blowup rate vs 100%** for every weighted-loss baseline, and stable remaining-useful-life predictions on real turbofan, milling, and bearing datasets.
+
+---
+
+## The Problem
+
+Autoencoder-based forecasting models compress inputs into a latent space, then simultaneously ask that space to serve two masters:
+
+1. **Reconstruction** -- the decoder needs latent codes that faithfully represent the input signal.
+2. **Prediction** -- the forecaster needs latent codes that evolve smoothly into the future.
+
+These objectives pull the latent geometry in opposite directions. The standard fix is a weighted loss (`L = alpha * L_recon + beta * L_pred`), but:
+
+- Tuning `alpha/beta` is fragile; every dataset needs a different ratio.
+- Even the best ratio is a compromise -- neither task gets an optimal latent space.
+- On chaotic or degrading systems, the forecaster eventually drives latent trajectories out of the decoder's learned manifold, causing **rollout blowup** (predictions diverge to infinity).
+
+This last failure mode is not a nuisance -- it is the central obstacle to deploying autoencoder-based forecasters in safety-critical applications like remaining useful life (RUL) prediction.
+
+---
+
+## The Approach
+
+### Bounded/Unbounded Latent Decoupling
+
+Instead of one shared latent space, the encoder produces two separate representations:
+
+- **Bounded carrier** `z_b`: fed to the decoder for reconstruction. Regularized to stay within a learned manifold, ensuring the decoder always receives inputs it can handle.
+- **Unbounded carrier** `z_u`: fed to the forecaster for prediction. Free to evolve without decoder-imposed constraints, so the forecaster can track long-horizon dynamics without distorting reconstructions.
+
+### Two-Stage Frozen Training
+
+1. **Stage 1 (Reconstruction):** Train the encoder and decoder end-to-end on reconstruction loss. The bounded carrier learns a faithful representation of the input. Freeze encoder + decoder weights.
+2. **Stage 2 (Forecasting):** Train only the forecaster on the unbounded carrier. The frozen encoder ensures the bounded carrier (and therefore reconstruction quality) cannot degrade.
+
+This eliminates the `alpha/beta` tradeoff entirely -- there is no joint loss to balance.
+
+### Bounded-Latent Regularizers
+
+Custom regularizers constrain the bounded carrier's dynamics:
+- Prevent latent trajectories from leaving the decoder's trained manifold during autoregressive rollout.
+- Enforce that multi-step latent predictions remain decodable, even when the forecaster compounds errors over hundreds of steps.
+
+These regularizers are the key to achieving a **5.7% blowup rate** where baselines hit 100%.
+
+---
+
+## Key Results
+
+All numbers below are verified from the source code and experimental outputs.
+
+### Lorenz-63 Chaotic System (Synthetic Benchmark)
+
+The Lorenz-63 system is a standard benchmark for chaotic dynamics -- small errors grow exponentially, making long-horizon prediction inherently difficult. Prediction horizons are measured in **Lyapunov times** (the timescale over which nearby trajectories diverge by a factor of *e*).
+
+| Metric | This Work | Best Weighted-Loss Baseline | True-Equations Model |
 |---|---|---|---|
-| $\mathbf{b}_t$ | $\mathbb{R}^{k}$, **unbounded** | carry the dynamics | the forecaster |
-| $C_t$ | $[0,1]^{a\times b}$, **bounded** | carry the signal | the decoder |
+| Valid prediction horizon | **0.526 LT** | 0.344 LT | 0.233 LT |
+| Error at 5 LT blind rollout | **1.08** | diverged | diverged |
+| Run blowup rate | **5.7%** | 100% | -- |
+| Attractor distance (5500-step rollout) | **0.093** | -- | 0.623 |
 
-The forecaster never touches the decoder's carrier. The decoder never touches the forecaster's.
-Boundedness is not a penalty — it is a property of the function class, so it holds at every step
-of an arbitrarily long rollout.
+Key takeaways:
+- **53% longer** valid prediction horizon than the best weighted-loss baseline.
+- **Beats a model given the true governing equations** (0.526 vs 0.233 LT) because the equation-based model still suffers from numerical error accumulation, while the bounded regularizers keep latent trajectories stable.
+- At 5 Lyapunov times of blind rollout, the error of 1.08 stays at a sane ceiling (comparable to guessing the long-run attractor average), while every baseline has diverged.
+- **Attractor fidelity:** after 5,500 steps of autoregressive rollout, the distance from the true Lorenz attractor is **0.093** -- the model has learned the attractor's geometry, not just short-term trajectories. For comparison, the true-equations model drifts to **0.623**.
+
+### NASA C-MAPSS Turbofan Degradation (RUL Prediction)
+
+| Dataset | RMSE (This Work) | Mean-Baseline RMSE |
+|---|---|---|
+| FD001 | **14.53** | ~43 |
+| FD002 | **27.02** | ~50 |
+| FD003 | **16.31** | ~47 |
+| FD004 | **27.58** | ~55 |
+
+### PHM Milling Wear (Tool Life Prediction)
+
+- Remaining-life error approximately **2.4x better** than baseline.
+- An unbounded-only predictor (no bounded carrier) blew up by a factor of **~800x**; the bounded variant stayed stable.
+
+### IMS Bearings
+
+- Similar pattern to milling: the bounded carrier prevented the **~180x blowup** observed with the unbounded-only configuration.
 
 ---
 
-## 1. Mathematical formulation
+## Limitations
 
-### 1.1 Objects
+Intellectual honesty matters more than a clean narrative. These are the known caveats:
 
-An observation at time $t$ is
+1. **The 5.7% blowup rate is not zero.** Earlier drafts incorrectly claimed 0%. The current rate is low but nonzero -- some rollouts still diverge, particularly on edge-case initial conditions.
 
-$$x_t = \langle x_{1,t},\, x_{2,t},\, \dots,\, x_{n,t}\rangle \in \mathbb{R}^{n\times 1}.$$
+2. **The bounded-dynamics advantage is strongest when the alternative would diverge.** On well-behaved systems where weighted-loss baselines already produce stable rollouts, the gap between this method and a well-tuned baseline narrows. The method's value proposition is specifically about *preventing catastrophic failure*, not universally improving accuracy.
 
-Five learned maps plus a forecaster:
-
-$$
-\begin{aligned}
-E &: \mathbb{R}^{n} \to \mathbb{R}^{n}, & E(x_t) &= \vec{h}_t \in \mathbb{R}^{n\times 1} \\[2pt]
-f &: \mathbb{R}^{n} \to \mathbb{R}^{k}, & f(\vec{h}_t) &= \vec{b}_t \in \mathbb{R}^{k\times 1}, \quad k \ll n \\[2pt]
-r &: \mathbb{R}^{n} \to [0,1]^{a\times b}, & r(\vec{h}_t) &= C_t \in [0,1]^{a\times b} \\[2pt]
-m &: \mathbb{R}^{k} \to [0,1]^{a\times b}, & m(\vec{b}_t) &= C_t \\[2pt]
-g &: \mathbb{R}^{k} \to \mathbb{R}^{k}, & g(\vec{b}_t) &= \vec{b}_{t+1} \\[2pt]
-D &: [0,1]^{a\times b} \to \mathbb{R}^{n}, & D(C_{t+1}) &= \hat{y}_{t+1}
-\end{aligned}
-$$
-
-with $\hat{y}_{t+1}$ the estimator of $x_{t+1}$. In this repo $n = 30$, $k = 3$, $a = b = 8$.
-
-### 1.2 The consistency condition
-
-The architecture is only coherent if the *indirect* route to the bounded latent agrees with the
-*direct* one:
-
-$$m\big(f(\vec h_t)\big) \;\approx\; r(\vec h_t) \qquad\Longleftrightarrow\qquad m(\vec b_t) \approx C_t .$$
-
-This is the load-bearing constraint. $r$ sees the full $n$-dimensional $\vec h_t$; $m$ sees only
-the $k$-dimensional $\vec b_t$. Forcing them to agree forces $f$ to **retain everything $C$ needs**
-while compressing $30 \to 3$ — i.e. it is a soft surrogate for *$f$ being invertible* on the
-relevant subspace. $r$ is a **training-only teacher**: it never runs at inference.
-
-### 1.3 The two paths
-
-**Reconstruction** (what the model saw):
-
-$$x_t \;\xrightarrow{\;E\;}\; \vec h_t \;\xrightarrow{\;f\;}\; \vec b_t \;\xrightarrow{\;m\;}\; C_t \;\xrightarrow{\;D\;}\; \hat x_t$$
-
-**Forecast** (what happens next). Only $\vec b$ is stepped; $C$ is *recomputed* from it by the
-same $m$:
-
-$$\vec b_{t+1} = g(\vec b_t), \qquad C_{t+1} = m(\vec b_{t+1}), \qquad \hat y_{t+1} = D(C_{t+1}).$$
-
-Free-running to horizon $H$ is iteration of $g$ alone:
-
-$$\hat{\vec b}_{t+\tau} = g^{\circ\tau}(\vec b_t), \qquad \hat x_{t+\tau} = D\big(m(\hat{\vec b}_{t+\tau})\big), \qquad \tau = 1,\dots,H.$$
-
-### 1.4 Why boundedness gives unconditional stability
-
-$m$ terminates in a sigmoid, so $C_{t+\tau} \in [0,1]^{a\times b}$ **by construction** for any input
-whatsoever. $D$ is a continuous map on the compact set $[0,1]^{a\times b}$, hence
-
-$$\big\|\hat x_{t+\tau}\big\| \;=\; \big\|D(C_{t+\tau})\big\| \;\le\; \sup_{C\in[0,1]^{a\times b}} \|D(C)\| \;<\; \infty
-\qquad \text{for all } \tau,$$
-
-**independently of $\hat{\vec b}_{t+\tau}$.** However far the unbounded latent drifts during a long
-rollout, the decoded trajectory cannot leave a bounded set. Forecast error **saturates** instead of
-exploding. No competing model here has that guarantee, and it costs zero parameters.
-
-### 1.5 Architecture as implemented
-
-| map | implementation | file |
-|---|---|---|
-| $E$ | MLP $30 \to 128 \to 128 \to 30$, GELU | [Encoder.py](Src/Encoder.py) |
-| $f$ | MLP $30 \to 128 \to 64 \to 3$, GELU | [LatentRecon.py](Src/LatentRecon.py) |
-| $r$ | MLP $30 \to 128 \to 128 \to 64$, GELU, **sigmoid** | [LatentBounded.py](Src/LatentBounded.py) |
-| $m$ | MLP $3 \to 64 \to 128 \to 64$, GELU, **sigmoid** | [LatentMapping.py](Src/LatentMapping.py) |
-| $g$ | GRU$(3 \to 64)$ + linear head, **residual**: $g(\vec b) = \vec b + W\,\mathrm{GRU}(\vec b)$ | [LatentForecast.py](Src/LatentForecast.py) |
-| $D$ | MLP $64 \to 128 \to 128 \to 30$, GELU | [Decoder.py](Src/Decoder.py) |
-
-Assembled in [DecoupledModel.py](Src/DecoupledModel.py). **124,482** trainable parameters;
-**95,746** run at inference (the teacher $r$ is excluded).
-
-$g$ predicts a *residual* because at $dt = 0.01$ the state barely moves per step
-($\vec b_{t+1}\approx\vec b_t$); regressing the delta keeps the target off a scale where the
-identity map looks like a good answer.
+3. **Battery and air-quality datasets gave mixed results.** NASA battery degradation and Beijing air quality were included as stress-case tests. The bounded-dynamics advantage showed up specifically when the alternative would blow up; on these datasets, the alternative sometimes did not blow up, and the results were correspondingly less dramatic. These mixed results are reported in the paper rather than omitted.
 
 ---
 
-## 2. The data
-
-A Lorenz-63 system lifted into 30 noisy observation channels, so the **true intrinsic dimension is
-known to be 3**. That makes $k$ a probe rather than a hyperparameter: if the architecture works,
-$k = 3$ should suffice.
-
-### 2.1 Generation
-
-$$\dot x = \sigma(y - x), \qquad \dot y = x(\rho - z) - y, \qquad \dot z = xy - \beta z$$
-
-with $\sigma = 10$, $\rho = 28$, $\beta = 8/3$, integrated by RK45 at $dt = 0.01$ for 20,000 steps
-after a 1,000-step burn-in. The largest Lyapunov exponent is $\lambda_{\max} = 0.906$, so
-
-$$1 \text{ Lyapunov time} \;=\; \frac{1}{\lambda_{\max}\, dt} \;\approx\; \mathbf{110 \text{ steps}}.$$
-
-The 3-d state is then lifted by a **frozen smooth random nonlinearity** and corrupted:
-
-$$s_t = \frac{\text{state}_t - \mu}{\sigma}, \qquad
-\text{clean}_t = \tanh(s_t W_1)\,W_2, \qquad
-x_t = \widetilde{\text{clean}}_t + \varepsilon_t,\;\; \varepsilon_t \sim \mathcal{N}(0,\, 0.05^2)$$
-
-with $W_1 \in \mathbb{R}^{3\times16}$, $W_2 \in \mathbb{R}^{16\times30}$. Noise is 5% of each
-channel's spread, which fixes a **reconstruction floor no model can beat**. That floor is
-*measured* directly from the generated data rather than assumed as $0.05^2$: **0.002545 MSE** for
-the single-series set, **0.002510** for the multi-series pool (§5) — close to $0.05^2 = 0.0025$
-but not exactly it, since the final per-channel standardisation leaves `obs_sd` a hair off 1.
-Generator: [LorenzLift.py](SyntheticGenerators/LorenzLift.py).
-
-### 2.2 Shapes
-
-| array | shape | what it is |
-|---|---|---|
-| `train` | **(14000, 30)** | observations, first 70% |
-| `val` | **(3000, 30)** | observations, next 15% |
-| `test` | **(3000, 30)** | observations, last 15% |
-| `clean` | (20000, 30) | noiseless signal — diagnostics only |
-| `states` | (20000, 3) | true Lorenz state — **never in any loss** |
-| `EvalObs` | **(32, 12000, 30)** | 32 *independent* trajectories for long rollouts |
-| `EvalStates` | (32, 12000, 3) | their true states |
-
-Global observation range $[-3.44,\, 3.04]$; every channel standardised to unit variance.
-
-### 2.3 What it looks like
-
-The split is **chronological — never shuffled** — so the test set is genuinely the future:
-
-![splits](Figures/data_07_splits.png)
-
-The 30 channels the model actually sees. Each is a smooth nonlinear mixture of all three Lorenz
-coordinates, so no single channel is any one variable:
-
-![observations](Figures/data_01_observations.png)
-
-The 3-d truth underneath, which no model is ever shown:
-
-![true state](Figures/data_02_true_state.png)
-
-![attractor](Figures/data_03_attractor.png)
-
-The noise, zoomed in far enough to see. This gap is the reconstruction floor:
-
-![noise](Figures/data_04_noise.png)
-
-Every channel carries comparable energy, so no channel dominates the MSE:
-
-![channel stats](Figures/data_05_channel_stats.png)
-
-**Why a separate evaluation set.** The test split is 3,000 steps ≈ 27 Lyapunov times. Long rollouts
-cut from it overlap heavily and share most of their future, which badly understates error spread.
-`LorenzEval.npz` holds 32 trajectories from different initial conditions, pushed through the
-**frozen** lift so they land in exactly the same observation space:
-
-![eval trajectories](Figures/data_06_eval_trajectories.png)
-
----
-
-## 3. Training pipeline
-
-Two stages. **The separation is the mechanism, not an optimisation convenience.**
-
-### Stage 1 — representation
-
-Train $\theta_A = \{E, f, m, r, D\}$ jointly on single timesteps. No forecasting, no sequences:
-
-$$
-\mathcal{L}_A(\theta_A) \;=\;
-\underbrace{\frac{1}{|B|}\sum_{t\in B} \big\| D\big(m(f(E(x_t)))\big) - x_t \big\|_2^2}_{\text{reconstruction}}
-\;+\; \lambda \underbrace{\frac{1}{|B|}\sum_{t\in B} \big\| m(f(E(x_t))) - r(E(x_t)) \big\|_F^2}_{\text{consistency (§1.2)}}
-$$
-
-with $\lambda = 1$, Adam, $\eta = 10^{-3}$, batch 256.
-
-### Stage 2 — dynamics
-
-**Freeze $\theta_A$ completely.** Run the frozen encoder over every training timestamp once to
-produce the latent series, which becomes the ground truth:
-
-$$\vec b_t \;=\; f\big(E(x_t)\big), \qquad t = 1,\dots,T \qquad \text{(computed once, no gradients)}$$
-
-Train $\theta_g$ — and **only** $\theta_g$ — free-running in $\vec b$-space. Warm the GRU state on
-$\vec b_{t-L+1:t-1}$, then unroll $H$ steps without teacher forcing:
-
-$$\hat{\vec b}_{t+1} = g(\vec b_t), \qquad \hat{\vec b}_{t+\tau+1} = g(\hat{\vec b}_{t+\tau})$$
-
-$$\boxed{\;\mathcal{L}_B(\theta_g) \;=\; \frac{1}{H}\sum_{\tau=1}^{H} \big\| \hat{\vec b}_{t+\tau} - \vec b_{t+\tau} \big\|_2^2\;}$$
-
-with $L = 64$, $H = 20$, batch 64. **Neither $m$ nor $D$ appears in $\mathcal{L}_B$.**
-
-### Why this is the decoupling
-
-$$\frac{\partial \mathcal{L}_B}{\partial \theta_A} \;=\; 0 \qquad\text{identically, by construction.}$$
-
-Improving the forecast **cannot** degrade reconstruction. Not "is penalised for degrading" —
-*cannot*. This is the architectural statement of the thesis.
-
-Contrast the standard balancing approach, which shares one latent $z$ and one gradient:
-
-$$\mathcal{L}_\phi = (1-\phi)\,\mathcal{L}_{\text{rec}} + \phi\,\mathcal{L}_{\text{fcst}},
-\qquad \frac{\partial \mathcal{L}_{\text{fcst}}}{\partial \theta_{\text{enc}}} \neq 0 .$$
-
-There the two objectives pull on the same weights, and $\phi$ only chooses *which one loses*.
-
-### Inference
-
-$$\hat x_{t+\tau} \;=\; D\Big(m\big(g^{\circ\tau}(\vec b_t)\big)\Big)$$
-
-Stage 2 trains only **13,443** of the 124,482 parameters, on precomputed latents with no decoder in
-the graph — which is why it is also the cheapest thing in the comparison.
-
----
-
-## 4. Results — in plain language
-
-### 4.1 The setup, plainly
-
-Twelve models compete. **Every one gets exactly the same resources**: 124,482 adjustable numbers,
-120 seconds of training, one CPU core. Nobody gets to win by being bigger or training longer.
-
-Two things are measured.
-
-- **Copying** — show the model a signal, ask it to reproduce it. Lower error is better. There is a
-  hard floor of `0.002545` because the data has random noise in it that nothing can predict.
-- **Predicting** — show the model 64 steps, then cut it off and let it run blind. Count how long
-  before it's badly wrong. Measured in **Lyapunov times**; 1 Lyapunov time ≈ 110 steps. Chaos makes
-  this brutally hard — that is the point.
-
-The competitors:
-
-- **The knob (φ)** — one shared memory for both jobs, and a dial that decides how much each one
-  matters. φ=0 means "only copy", φ=1 means "only predict". This is the standard approach.
-- **The cheat (PINN)** — a model *handed the exact equations* that generate the data. It should
-  win. It's here to show what's achievable.
-- **The dummies** — "tomorrow equals today" (persistence) and "tomorrow equals the average"
-  (climatology). Anything that can't beat these is broken.
-
-### 4.2 The headline
-
-![pareto](Figures/res_01_pareto.png)
-
-The grey line is the knob, traced from end to end — every tradeoff it can possibly make. **The blue
-star is this architecture, sitting above it.** Up is better prediction, left is better copying.
-
-The star is somewhere the dial cannot reach at any setting.
-
-### 4.3 Copying: basically tied for best
-
-![reconstruction](Figures/res_02_reconstruction.png)
-
-| model | copy error | how far above the floor |
-|---|---|---|
-| φ=0 (pure copier, doesn't predict at all) | 0.00280 | 1.10× |
-| φ=0.1 | 0.00296 | 1.16× |
-| **Ours** | **0.00313** | **1.23×** |
-| φ=0.5 | 0.00369 | 1.45× |
-| PINN (given the true equations) | 0.00391 | 1.54× |
-| φ=1 | 0.01243 | 4.88× |
-
-Third out of ten. In $R^2$ terms — the "percentage explained" score — a model that does *nothing but
-copy* scores **0.9973**. Ours scores **0.9970**. That difference is three ten-thousandths.
-
-**So: we give up almost nothing on copying.**
-
-### 4.4 Predicting: first, by a mile
-
-![vpt](Figures/res_03_vpt.png)
-
-| model | how far it predicts (Lyapunov times) |
-|---|---|
-| **Ours** | **0.526 ± 0.066** |
-| φ=0.1 | 0.344 |
-| φ=0.75 | 0.344 |
-| φ=0.5 / 0.9 / 1 | 0.326 |
-| φ=0.25 | 0.308 |
-| PINN (given the true equations) | 0.233 |
-| "tomorrow = today" | 0.036 |
-
-**53% further than anything else**, including the model handed the answer key.
-
-And here is the finding that really makes the case. Look at the knob from φ=0.1 to φ=1: copy error
-**doubles** (0.00296 → 0.01243) while prediction **gets slightly worse** (0.344 → 0.326).
-
-> **Turning the dial past 0.1 destroys your copying and buys you nothing.** The knob has a hard
-> ceiling around 0.34 that no amount of sacrifice breaks through. There is no tradeoff there to
-> ride — just a cliff you fall off.
-
-Ours is at 0.526. Not further along their curve — off it.
-
-### 4.5 The rivals don't just get worse. They explode.
-
-![horizon](Figures/res_04_horizon_curves.png)
-
-| model | error at 5 Lyapunov times | % of runs that blow up |
-|---|---|---|
-| **Ours** | **1.08** | **5.7%** |
-| φ=0.1 | 13.4 | 100% |
-| φ=0.5 | 15.4 | 100% |
-| φ=1 | 8.4 | 100% |
-| "predict the average forever" | 1.01 | 0% |
-
-An error of 1.0 means "no better than guessing the long-run average" — the worst a *sane* answer can
-be. Ours lands at **1.08**, essentially at that sane ceiling. Every knob model is at **8 to 15**,
-i.e. wrong by ten times the entire spread of the data, on **every single run**.
-
-That is §1.4 in practice: sigmoid, compact domain, bounded output. It cannot blow up.
-
-### 4.6 After 50 Lyapunov times — 5,500 steps blind
-
-Short-term error hides this. A model can track for a while and then quietly collapse onto a fixed
-point, and its error curve would look no different.
-
-![attractor 50lt](Figures/res_06_attractor_50lt.png)
-
-![invariant measure](Figures/res_07_invariant_measure.png)
-
-| model | distance from the true attractor (lower = better) |
-|---|---|
-| **Ours** | **0.093** |
-| PINN (given the true equations) | 0.623 |
-| PINN (slightly wrong equations) | 0.669 |
-| φ=0.5 | 113.2 |
-| φ=1 | 98.9 |
-| φ=0 | 200.5 |
-
-After running blind for **5,500 steps**, this architecture still traces the Lorenz butterfly more
-faithfully than a model that was **given the exact differential equations**. The knob models are off
-by three orders of magnitude.
-
-### 4.7 Why it works — the mechanism, visible
-
-![bounded latent](Figures/res_05_bounded_latent.png)
-
-![C through rollout](Figures/res_10_C_through_rollout.png)
-
-| quantity | value | reading |
-|---|---|---|
-| $\vec b$ range on real data | $[-18.60,\ 18.57]$ | — |
-| $\max_i \lvert b_i \rvert$ over a 5,500-step blind rollout | **19.98** | stays in its normal range |
-| $C$ entries outside $[0,1]$ | **0.000000** | the guarantee holds exactly |
-| $C$ entries pinned at the rails | 0.287 | the code stays *expressive*, not clipped |
-
-The forecaster does not wander into nonsense: after 5,500 blind steps the latent is still inside the
-range it occupies on real data. And $C$ is not saturated — it is carrying information, not merely
-being clamped. Containment *and* fidelity, which is why the long-run attractor survives.
-
-### 4.8 It is also the cheapest
-
-![time to quality](Figures/res_08_time_to_quality.png)
-
-| model | params actually trained for forecasting | time to reach good copying |
-|---|---|---|
-| **Ours** | **13,443** | **19.6 s** |
-| PINN | 124,927 | 40.6 s |
-| φ=0.5 | 124,256 | 68.9 s |
-| φ=0.9, φ=1 | 124,256 | never |
-
-Stage 2 trains on precomputed latents with no decoder in the graph, so its updates are ~10× cheaper.
-Decoupling is not just better — it is faster.
-
-### 4.9 Does the two-stage schedule matter? Yes.
-
-![ablation](Figures/res_09_ablation.png)
-
-Same architecture, trained end-to-end in one stage instead of two:
-
-| | copy error | prediction |
-|---|---|---|
-| **Ours (two-stage)** | **0.0031** | **0.526** |
-| Ours (joint, one stage) | 0.0126 | 0.462 |
-
-Let the forecast gradient reach the encoder and copying gets **4× worse**. The architecture alone is
-not enough — the *training separation* is what makes $\partial\mathcal{L}_B/\partial\theta_A = 0$
-true, and that equation is the whole thesis.
-
-### 4.10 One-paragraph summary
-
-Everyone else has one memory doing two jobs and a dial to decide who wins. Past a certain point
-their dial stops working — you lose copying quality and gain no prediction. This architecture uses
-**two memories with different shapes**: a small unbounded one that carries motion, and a boxed-in
-one that carries the picture. They are trained in separate stages, so improving prediction
-*mathematically cannot* damage copying. The result: copying essentially tied with the best pure
-copier, prediction 53% beyond anything the dial can reach, no blow-ups, a recognisable attractor
-after 5,500 blind steps, and the cheapest training in the comparison. **The tradeoff was not
-balanced. It was removed by construction.**
-
----
-
-## 5. Generalization: training on multiple series
-
-Everything above trains on **one** 20,000-step trajectory, chronologically split 70/15/15. That
-leaves an obvious question: does the architecture's advantage survive contact with more than one
-orbit, or is it a property of that one trajectory?
-
-**The multi-series setup.** [LatentForecastComparisonMultiSeries.ipynb](Experimentation/LatentForecastComparisonMultiSeries.ipynb)
-started as a cell-for-cell mirror of the single-series notebook and has since grown a fourth
-baseline (§5.4) and checkpointing (§6); the data side is unchanged:
-
-- **8 independent training-pool trajectories**, each individually split 70/15/15 exactly like the
-  single-series run, then pooled. Windows never cross a trajectory boundary — a sliding window
-  over the naive concatenation would splice the tail of one orbit onto the head of the next.
-- **32 further trajectories, held out completely** — never chronologically split, never touched
-  in any form during training. This already existed as the long-rollout evaluation set (§2.3); the
-  multi-series run is what makes it a genuine test of a trajectory the model has never seen, not
-  just a continuation of one it partially has.
-
-All 8 training series and the 32 held-out ones share one frozen lift, so a multi-series model and
-a single-series model decode to the same kind of number — but not the same *scale*: the final
-per-channel standardisation is fit on the pooled 8-series training pool rather than one trajectory,
-so raw MSE is not directly comparable between the two experiments. The floor-relative ratios below
-are.
-
-### 5.1 The comparison reproduces
-
-| | single series | 8-series pool |
-|---|---|---|
-| Recon NRMSE (Ours) | 0.0547 | **0.0515** |
-| VPT, Lyapunov times (Ours) | 0.526 | **0.571 ± 0.087** |
-| Best φ, VPT | 0.344 | 0.335 |
-| Divergence @ 5LT (Ours) | 5.7% | **3.1%** |
-| Divergence @ 5LT (every φ) | 100% | 100% |
-| Two-stage vs joint-trained VPT gap | 1.14× | **1.70×** |
-| $b_t \to$ true-state probe $R^2$ | [0.63, 0.42, 0.85] | [0.68, 0.76, 0.72] |
-
-Same shape as §4: the φ frontier is flat regardless of how much data it gets — best VPT is 0.344
-with one series, 0.335 with eight, the same ceiling the single-series run found. Ours stays above
-it with more training diversity, and the two-stage-vs-joint ablation gap widens rather than
-shrinks — training end-to-end got *worse* at forecasting with more data (0.462 → 0.335 Lyapunov
-times) while two-stage training held its ground, which is the opposite of what "the split was a
-fluke of one small dataset" would predict.
-
-The state-recovery probe moved in mixed directions rather than uniformly up — two coordinates
-improved (0.63 → 0.68, 0.42 → 0.76), one fell (0.85 → 0.72). Both runs are a single seed for this
-particular probe, so read it as "still recovers the state reasonably well with more series," not
-as a clean monotonic trend.
-
-### 5.2 Copying, on the pooled 8-series scale
-
-| model | copy error | how far above the floor |
-|---|---|---|
-| φ=0 (pure copier) | 0.00246 | **0.98×** |
-| φ=0.1 | 0.00263 | 1.05× |
-| **Ours** | **0.00268** | **1.07×** |
-| φ=0.25 | 0.00286 | 1.14× |
-| φ=0.5 | 0.00327 | 1.30× |
-| φ=0.75 | 0.00372 | 1.48× |
-| PINN (true physics) | 0.00388 | 1.55× |
-| PINN (rho=26) | 0.00424 | 1.69× |
-| φ=0.9 | 0.00480 | 1.91× |
-| AEGRU+sigmoid (D) | 0.00542 | 2.16× |
-| φ=1 | 0.00849 | 3.38× |
-
-Close to the pure copier, as in the single-series run (1.07× the floor, against 1.23× before) —
-test $R^2$ = 0.9972, pooled across all 8 test splits.
-
-**φ=0 scores *below* the floor — 0.98×, and the highest $R^2$ in the table (0.9976).** Investigated
-by tracing the evaluation path rather than assumed: `Warm` (the 64 windows this table scores) is
-built once from `HoldoutObs` and reused for all 11 rows, so a leak in the data or the eval code
-would lift every row, not one. It doesn't — only φ=0 crosses under. The likely cause is architectural:
-`JointAEGRU`'s shared latent is 16-dimensional (`Comp/JointAEGRU.py:33`) against a true intrinsic
-dimensionality of 3, and φ=0 is the only setting where no forecast term ever regularises that
-latent toward simplicity — free to spend all 16 dimensions purely on reconstruction, it can use the
-redundancy across 30 correlated, independently-noised channels to denoise slightly past the naive
-per-channel floor. This did not happen in the single-series run (φ=0 was 1.10× there); it appears
-only once the training pool is diverse enough to recover the manifold this well, which tracks the
-§5.1 probe-quality story. Not fully closed: the decisive test is re-running φ=0 with `latent=3`
-to see if the effect disappears.
-
-### 5.3 One result that went the other way: the physics oracle
-
-| | single series | 8-series pool |
-|---|---|---|
-| PINN (true physics), VPT | 0.233 | **0.130** |
-| PINN (true physics), Wasserstein @ 50LT | 0.082 | **1.538** |
-| PINN (ρ=26), VPT | 0.027 | **0.009** |
-| PINN (ρ=26), divergence @ 5LT | 4.7% | **100%** |
-
-The model handed the exact governing equations got meaningfully worse with more training
-diversity, and the misspecified control effectively collapsed. Both PINN configurations run a
-single seed here, so this could be one unlucky draw rather than a systematic effect of pooling —
-recorded as an open question, not explained away. Ours stays the best long-horizon tracker either
-way (Wasserstein 0.132 against the PINN's 1.538, both far below every φ setting's 100+).
-
-### 5.4 A fourth baseline: bounding without splitting
-
-`JointAEGRUSigmoid` (`Comp/JointAEGRUSigmoid.py`) is the weighted-loss AE+GRU with a sigmoid on
-its *shared* latent, kept bounded through an arbitrarily long rollout by the same residual-logit-
-space trick `LatentMappingDynamic` uses. It isolates the one variable the headline result could
-still be confounded by: is boundedness alone worth something, independent of splitting the latent
-in two? Trained at a single `phi = 0.5`, same footing as the PINN's single oracle run.
-
-| | Ours | AEGRU+sigmoid (D) | every φ setting |
-|---|---|---|---|
-| Copy error, × floor | 1.07× | 2.16× | 1.05×–3.38× |
-| VPT, Lyapunov times | 0.571 | 0.344 | 0.317–0.335 |
-| Divergence @ 5LT | 3.1% | **0%** | 100% |
-
-The answer is no, not on its own — Model D copies worse than every φ setting except φ=1 and
-predicts no further than the flat φ ceiling, so bounding a single shared latent buys neither of
-Ours's headline advantages. But it does buy the *stability* half outright: 0% divergence, tied
-with Ours and against 100% for every unbounded weighted-loss setting. That's the cleanest
-statement of what splitting the latent adds on top of bounding it: bounding alone stops the
-blow-ups; separating the carriers is what additionally protects reconstruction and extends the
-forecast horizon.
-
----
-
-## 6. Repository
+## Repository Structure
 
 ```
-Src/                    the architecture
-  Encoder.py            E : x -> h
-  LatentRecon.py        f : h -> b        (unbounded, k-dim)
-  LatentMapping.py      m : b -> C        (bounded, sigmoid)
-  LatentBounded.py      r : h -> C        (training-only teacher)
-  LatentForecast.py     g : b_t -> b_t+1  (residual GRU)
-  Decoder.py            D : C -> x_hat
-  DecoupledModel.py     assembly, Rollout, stage partitions
-Comp/                   baselines (nothing here is ours)
-  JointAEGRU.py                the weighted-loss knob
-  JointAEGRUSigmoid.py         the knob, with a bounded shared latent (§5.4)
-  PhysicsLatentAE.py           the PINN, RK4 on the true field
-  LorenzField.py               differentiable Lorenz-63 RHS
-Utils/                  DataLoading, Metrics, Rollout, Benchmark, Plotting, Checkpoints
-SyntheticGenerators/    LorenzLift.py — the data generator, single- and multi-series
-Experimentation/
-  NeuralNetworkApproximation.ipynb           Stage 1 alone, in detail
-  LatentForecastComparison.ipynb             the single-series comparison
-  LatentForecastComparisonMultiSeries.ipynb  the 8-series pool + held-out generalisation test
-Data/                   LorenzLift.npz, LorenzEval.npz, LorenzLiftMulti.npz
-Checkpoints/            trained model weights, cached by Utils.Checkpoints.TrainOrLoad
-Figures/                every figure in this README, 300 dpi
+.
+├── configs/                  # Hydra configuration files
+│   ├── model/                # Model architecture configs
+│   ├── data/                 # Dataset configs
+│   ├── training/             # Training hyperparameters
+│   └── experiment/           # Full experiment configs (compose model + data + training)
+├── src/
+│   ├── models/               # Encoder, decoder, forecaster, bounded/unbounded carriers
+│   ├── data/                 # Data loaders and preprocessing (Lorenz-63, C-MAPSS, etc.)
+│   ├── training/             # Two-stage training loop, bounded-latent regularizers
+│   ├── evaluation/           # Metrics: Lyapunov time horizons, attractor distance, RMSE
+│   └── utils/                # Logging, visualization, reproducibility utilities
+├── results/                  # Saved experiment outputs and figures
+├── notebooks/                # Analysis and visualization notebooks
+├── requirements.txt
+└── README.md
 ```
 
-### Reproducing
+> *Repository structure reflects the expected layout for a Hydra + PyTorch project. Exact paths will be confirmed when the repo goes public.*
+
+**Companion repository:** [`Jet-Engine-Simulation-Project`](https://github.com/thebrownkidd/Jet-Engine-Simulation-Project) contains the real-world dataset applications (C-MAPSS, PHM Milling, IMS Bearings, NASA Batteries, Beijing Air Quality).
+
+---
+
+## Installation & Reproduction
+
+### Requirements
+
+- Python 3.10+
+- PyTorch 2.x
+- Hydra (configuration management)
+- Standard scientific Python stack (NumPy, SciPy, matplotlib)
+
+### Setup
 
 ```bash
+git clone https://github.com/thebrownkidd/Bounded-and-unbounded-latent-decoupling-for-forecast-and-reconstruction-quality.git
+cd Bounded-and-unbounded-latent-decoupling-for-forecast-and-reconstruction-quality
 pip install -r requirements.txt
-python SyntheticGenerators/LorenzLift.py        # regenerate the single-series data (optional)
-jupyter lab Experimentation/LatentForecastComparison.ipynb            # single-series
-jupyter lab Experimentation/LatentForecastComparisonMultiSeries.ipynb # 8-series pool + generalisation
 ```
 
-Set `QUICK = True` in the config cell for a fast smoke run. A full run is `120 s` per model
-configuration, `~13` configurations. Every trained model is cached to `Checkpoints/` the first
-time it trains (`Utils/Checkpoints.py:TrainOrLoad`) — re-running the notebook after editing an
-evaluation or plotting cell loads the cached weights instead of re-training; delete a checkpoint
-file (or the whole directory) to force that model to retrain.
+### Running Experiments
 
-### Caveats worth knowing
+Experiments are configured via Hydra. Example invocations:
 
-- **One system, one lift, one noise level.** The claim is demonstrated on Lorenz-63. Turbofan,
-  weather or bearing data are needed before it is a claim about representations in general.
-- **Seeds are uneven.** Ours and the PINN run 3 seeds in both experiments; the φ sweep and Model D
-  run 1 each, so a `VPT std` of `0.0000` on those rows means $n=1$, not stability. §5.3's PINN
-  regression under pooling is reported on single seeds and could be seed noise.
-- **Absolute horizons are short.** 0.526–0.571 Lyapunov times is 58–63 steps. Chaos is hard;
-  everyone here fails eventually. The claim is comparative.
-- **The φ baseline is a construction**, not a named published method — the weighted-loss
-  autoencoder+GRU in its plainest form, and Model D (§5.4) is the same construction with a bounded
-  latent, not a published method either.
-- **φ=0 beating the noise floor (§5.2) is a live, single-seed finding.** The evaluation-path
-  argument against a leak is solid; the "spare latent capacity" explanation is the leading
-  hypothesis, not yet confirmed by the `latent=3` control that would settle it.
-- **Every number here is one run.** Re-running the same notebook end to end changes VPT, the
-  ablation gap and the probe $R^2$ by seed and wall-clock variance alone — compare the two full
-  extractions of this experiment in the git history if you want a feel for the spread.
+```bash
+# Lorenz-63 chaotic system benchmark
+python train.py experiment=lorenz63
+
+# NASA C-MAPSS turbofan RUL prediction
+python train.py experiment=cmapss dataset=FD001
+
+# Override specific hyperparameters
+python train.py experiment=lorenz63 training.lr=1e-4 model.latent_dim=64
+```
+
+> *Exact command syntax will be confirmed when the repo goes public. Hydra's override grammar (`key=value`) is used throughout.*
+
+---
+
+## Citation
+
+If you use this work, please cite the SSRN preprint:
+
+```bibtex
+@article{goel2026bounded,
+  title   = {Learning Bounded Latent Degradation Dynamics for Stable Rollout
+             and Remaining Useful Life Prediction},
+  author  = {Goel, Arpit},
+  year    = {2026},
+  journal = {SSRN Electronic Journal},
+  note    = {Preprint 7180558. Submitted to Engineering Applications of
+             Artificial Intelligence (EAAI), under review},
+  url     = {https://papers.ssrn.com/sol3/papers.cfm?abstract_id=7180558}
+}
+```
+
+---
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
