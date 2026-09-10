@@ -10,24 +10,22 @@ from .LatentForecast import LatentForecast
 
 
 class DecoupledModel(nn.Module):
-    """The bounded/unbounded chain plus its single forecaster.
+    """The decoupled chain plus its single forecaster.
 
-    Reconstruction path (Stage A, unchanged from the autoencoder experiment):
+    Reconstruction path (Stage A):
 
-        x -> E -> h -> f -> b (k, unbounded) -> m -> C (a x b, bounded) -> D -> x_hat
+        x -> E -> h -> F -> b (k, unbounded) -> M -> C (a x b, unbounded) -> D -> x_hat
 
-    Forecast path (Stage B). Only the unbounded latent is forecast; the bounded
-    latent is recomputed from it by the *same* static m that reconstruction uses,
-    so there is exactly one learned dynamics model in the chain:
+    Forecast path (Stage B). Only the unbounded latent is forecast; the carrier
+    is recomputed from it by the *same* static M that reconstruction uses:
 
-        b_{t+1} = g(b_t)          unbounded latent carries the dynamics
-        C_{t+1} = m(b_{t+1})      bounded latent is recomputed, not advanced
+        b_{t+1} = G(b_t)          unbounded latent carries the dynamics
+        C_{t+1} = M(b_{t+1})      carrier is recomputed, not advanced
         x_{t+1} = D(C_{t+1})
 
-    C stays in [0, 1] because m ends in a sigmoid, so boundedness survives an
-    arbitrarily long rollout however far b drifts.
+    The carrier C is unbounded (M has no sigmoid).
 
-    r = LatentBounded is a training-only teacher for the consistency term and
+    R = LatentBounded is a training-only teacher for the consistency term and
     never runs at inference, so it is excluded from the inference parameter
     count.
 

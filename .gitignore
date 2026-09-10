@@ -14,3 +14,6 @@ Paper/*.blg
 Paper/*.fls
 Paper/*.fdb_latexmk
 Paper/*.synctex.gz
+*.json
+*.png
+Experimentation\LatentForecastComparisonMultiSeries.ipynb

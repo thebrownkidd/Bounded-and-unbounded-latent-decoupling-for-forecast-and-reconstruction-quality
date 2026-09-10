@@ -147,6 +147,70 @@ def TimedTrain(EpochFn, EvalFn=None, budget_s=180.0, max_epochs=100000,
     return hist
 
 
+def EpochTrain(EpochFn, EvalFn=None, epochs=60, marks=(5, 10, 20, 40, 60),
+              name="train", PlotFn=None, plot_every=10, verbose=True):
+    """Run EpochFn for a fixed number of passes. Snapshots metrics at `marks`.
+
+    Replaces wall-clock budgeting: every parameter group gets the same number
+    of passes over its own training data, which is reproducible across
+    machines (wall-clock seconds are not). EpochFn() takes no deadline -- it
+    runs exactly one full pass and returns.
+
+    `marks` are epoch numbers at which EvalFn() is additionally called and
+    stored under hist["marks"][epoch], giving the whole epoch-scaling curve
+    from a single run instead of training separately at each budget.
+
+    Wall time is still recorded (hist["total_time"]) for reporting, but it no
+    longer defines the protocol.
+    """
+    t0 = time.perf_counter()
+    hist = {"epoch": [], "elapsed": [], "marks": {}}
+    eval_time = 0.0
+    mark_set = set(marks)
+
+    Bar = tqdm(total=epochs, desc=name, unit="ep", leave=True)
+
+    for epoch in range(1, epochs + 1):
+        stats = EpochFn()
+        elapsed = time.perf_counter() - t0 - eval_time
+
+        hist["epoch"].append(epoch)
+        hist["elapsed"].append(elapsed)
+        for k, v in (stats or {}).items():
+            hist.setdefault(k, []).append(float(v))
+
+        if EvalFn is not None:
+            e0 = time.perf_counter()
+            evals = EvalFn()
+            eval_time += time.perf_counter() - e0
+            for k, v in evals.items():
+                hist.setdefault(k, []).append(float(v))
+            if epoch in mark_set:
+                hist["marks"][epoch] = dict(evals)
+
+        Bar.n = epoch
+        Bar.set_postfix({k: f"{hist[k][-1]:.2e}" for k in hist
+                         if k not in ("epoch", "elapsed", "marks")})
+        Bar.refresh()
+
+        if PlotFn is not None and (epoch % plot_every == 0):
+            clear_output(wait=True)
+            PlotFn(hist)
+            plt.show()
+
+        if verbose and (epoch % max(1, epochs // 20) == 0 or epoch == epochs):
+            bits = " | ".join(f"{k} {hist[k][-1]:.3e}" for k in hist
+                              if k not in ("epoch", "elapsed", "marks"))
+            Bar.write(f"{name} epoch {epoch:04d}/{epochs} | {bits}")
+
+    Bar.close()
+
+    hist["total_time"] = time.perf_counter() - t0 - eval_time
+    hist["eval_time"] = eval_time
+    hist["epochs_done"] = epochs
+    return hist
+
+
 def TimeToTarget(hist, key, target):
     """Wall-clock seconds until `key` first reached `target`. None if never."""
     for t, v in zip(hist["elapsed"], hist.get(key, [])):

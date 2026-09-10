@@ -1,4 +1,89 @@
-\documentclass{article}
+import io, json
+
+SP = ("C:/Users/ARPITG~1/AppData/Local/Temp/claude/c--Users-ArpitGoel-Documents-GitHub-"
+      "Bounded-and-unbounded-latent-decoupling-for-forecast-and-reconstruction-quality/"
+      "cdd20b34-1bb7-4cf8-a41f-3ee2fc81363c/scratchpad/")
+J = json.load(open(SP + "paper_numbers.json"))
+Rt = json.load(open(SP + "paper_ratios.json"))
+R, D, P, CL = J["results"], J["data"], J["params"], J["climate_50LT"]
+BD, PT = J["boundedness"], J["passthrough"]
+FLOOR = D["noise_floor_mse"]
+
+
+def f(x, n=4):
+    return f"{x:.{n}f}"
+
+
+PROF = J["profile"]["by_model"]
+LEADS = J["profile"]["leads_LT"]
+I1 = LEADS.index(1.0)
+ACC_T = J["profile"]["acc_threshold"]
+
+
+def row(key, label, seeds):
+    r = R[key]
+    p = PROF[key]
+    rec = "--" if r.get("recon_mse") is None else f(r["recon_mse"], 5)
+    fl = "--" if r.get("recon_over_floor") is None else f(r["recon_over_floor"], 3)
+    sd = r.get("vpt_std", 0.0)
+    vpt = f(r["vpt"], 3) + (f"\\,$\\pm$\\,{sd:.3f}" if seeds > 1 else "")
+    return (f"{label} & {seeds if seeds else '--'} & {rec} & {fl} & {vpt} & "
+            f"{f(r['fcst_nrmse_full'], 3)} & {100*r['divergence']:.1f}\\% & "
+            f"{f(p['mae'][I1], 3)} & {f(p['acc_horizon_LT'], 2)} \\\\")
+
+
+def profrow(key, label, metric, fmt=3):
+    return f"{label} & " + " & ".join(f(v, fmt) for v in PROF[key][metric]) + r" \\"
+
+
+PROF_ORDER = [
+    ("Ours (three-phase)", r"\textbf{Ours}"), ("phi=0", r"$\phi$=0"),
+    ("phi=0.1", r"$\phi$=0.1"), ("phi=0.25", r"$\phi$=0.25"),
+    ("phi=0.5", r"$\phi$=0.5"), ("phi=0.75", r"$\phi$=0.75"),
+    ("phi=0.9", r"$\phi$=0.9"), ("phi=1", r"$\phi$=1"),
+    ("AEGRU+sigmoid", "AEGRU+sigmoid"), ("PINN (true physics)", "PINN"),
+    ("PINN (rho=26)", r"PINN ($\rho$=26)"), ("phi=0, latent=3", r"$\phi$=0, lat.\ 3"),
+    ("persistence", "persistence"), ("climatology", "climatology"),
+]
+LEADHDR = " & ".join(f"{t:g}" for t in LEADS)
+PROF_MAE = "\n".join(profrow(k, l, "mae") for k, l in PROF_ORDER)
+PROF_ACC = "\n".join(profrow(k, l, "acc") for k, l in PROF_ORDER)
+PROF_SS = "\n".join(profrow(k, l, "ss_persist", 2) for k, l in PROF_ORDER)
+PROF_VR = "\n".join(profrow(k, l, "var_ratio") for k, l in PROF_ORDER)
+
+
+TABLE = "\n".join([
+    row("Ours (three-phase)", r"\textbf{Ours (three-phase)}", 3),
+    row("Ours (one-stage)", "Ours (one-stage)", 1),
+    r"\midrule",
+    row("phi=0.1", r"$\phi$=0.1", 3),
+    row("phi=0.5", r"$\phi$=0.5", 3),
+    row("phi=0.25", r"$\phi$=0.25", 3),
+    row("AEGRU+sigmoid", "AEGRU+sigmoid (D)", 3),
+    row("PINN (true physics)", "PINN (true physics)", 3),
+    row("phi=1", r"$\phi$=1", 1),
+    row("phi=0", r"$\phi$=0", 1),
+    r"\midrule",
+    row("persistence", "persistence", 0),
+    row("climatology", "climatology", 0),
+])
+
+CAP = "\n".join(
+    f"{r['model'].replace('phi=', '$\\phi$=').replace('Ours (three-phase)', r'\textbf{Ours}')} & "
+    f"{r['d']} & {f(r['over_floor'],3)} & {f(r['bound'],3)} & {f(r['over_own_optimum'],3)} \\\\"
+    for r in Rt["recon_capacity_table"])
+
+CLIMT = "\n".join(
+    f"{k.replace('phi=', '$\\phi$=').replace('Ours (three-phase)', r'\textbf{Ours}')} & "
+    f"{f(v['wasserstein'],4)} & {f(v['wasserstein_max'],4)} & {f(v['spectrum_log_err'],3)} \\\\"
+    for k, v in CL.items())
+
+PTT = "\n".join(
+    f"{k.replace('phi=', '$\\phi$=').replace('Ours (three-phase)', r'\textbf{Ours}')} & "
+    f"{v['d']} & {f(v['passthrough'],3)} & {f(v['d']/D['n_obs'],3)} & {f(3/D['n_obs'],3)} \\\\"
+    for k, v in PT.items())
+
+TEX = r"""\documentclass{article}
 
 \usepackage[dblblindworkshop]{neurips_2026}
 
@@ -31,16 +116,16 @@ reconstruction loss and a forecasting loss, with the weight tuned per dataset.
 This assumes the balance between the two objectives is a real frontier. We ask
 whether it is instead a bad operating point that comes from forcing one latent
 to do both jobs. On a controlled chaotic benchmark (Lorenz-63 lifted to
-30 noisy channels, known intrinsic dimension 3) we split the
-representation into an unbounded 3-dimensional carrier read only by the
-forecaster and a sigmoid bounded 8$\times$8 carrier read only by the
+__NOBS__ noisy channels, known intrinsic dimension __K__) we split the
+representation into an unbounded __K__-dimensional carrier read only by the
+forecaster and a sigmoid bounded __A__$\times$__B__ carrier read only by the
 decoder, trained in three phases so the forecast gradient can never reach the
 decoder. At matched parameters, matched epochs and matched seeds it reaches a
-valid prediction time of 1.803 Lyapunov times against 0.619 for the best
-setting of the knob, 2.91 times longer. No baseline in the study beats
+valid prediction time of __VPT__ Lyapunov times against __RIVVPT__ for the best
+setting of the knob, __VPTX__ times longer. No baseline in the study beats
 climatology at 5 Lyapunov times and ours does, with no rollout ever leaving the
 training range. An ablation separates the two ingredients. We also explain a result that
-looks impossible: 7 of the baselines reconstruct better than the
+looks impossible: __NBELOW__ of the baselines reconstruct better than the
 measured noise floor, which turns out to be copying rather than denoising, and
 the models that copy most forecast worst.
 \end{abstract}
@@ -82,8 +167,8 @@ separating the carriers moves it there.
 (i) A capacity matched and epoch matched test of whether the tradeoff is a
 frontier or an operating point, on a system of known intrinsic dimension. (ii) A
 three phase schedule with a bounded and an unbounded carrier that reaches
-2.91 times the forecast horizon of the best weighted loss setting, while
-reconstructing at 1.012 times the measured noise floor and never leaving
+__VPTX__ times the forecast horizon of the best weighted loss setting, while
+reconstructing at __FLOORX__ times the measured noise floor and never leaving
 the training range. (iii) An explanation of why wide latent baselines appear to
 reconstruct below the noise floor.
 
@@ -95,7 +180,7 @@ $f$, a bounded map $m$, and a forecaster $g$. The inference path is
 
 \begin{equation}
 x_t \xrightarrow{\;E\;} h_t \xrightarrow{\;f\;} b_t \in \mathbb{R}^{k}
-\xrightarrow{\;m\;} C_t \in [0,1]^{8 \times 8} \xrightarrow{\;D\;} \hat{x}_t ,
+\xrightarrow{\;m\;} C_t \in [0,1]^{__A__ \times __B__} \xrightarrow{\;D\;} \hat{x}_t ,
 \qquad b_{t+1} = g(b_t).
 \end{equation}
 
@@ -133,24 +218,24 @@ ever reaches $D$.
 
 \section{Experimental setup}
 
-\paragraph{Data.} Lorenz-63 \citep{lorenz} at $dt=0.01$, lifted through a
-frozen random tanh map to 30 channels with additive noise, so the
-intrinsic dimension is known to be 3. We use 8 training trajectories
-of 20,000 steps each, split 70/15/15 in time and pooled, giving 112,000
+\paragraph{Data.} Lorenz-63 \citep{lorenz} at $dt=__DT__$, lifted through a
+frozen random tanh map to __NOBS__ channels with additive noise, so the
+intrinsic dimension is known to be __K__. We use __NSER__ training trajectories
+of __NSTEPS__ steps each, split 70/15/15 in time and pooled, giving __POOLED__
 timesteps. Every scaling constant is fit on that pooled training portion only. A
-further 32 trajectories are held out completely and never split, and all
+further __NHOLD__ trajectories are held out completely and never split, and all
 reported numbers come from windows cut from those. The measured noise floor is
-0.002492 in the final standardised scale.
+__FLOOR__ in the final standardised scale.
 
 \paragraph{Metrics.} Reconstruction MSE on held out windows, and its ratio to
 the noise floor. Valid prediction time (VPT), the lead time at which normalised
-error first crosses 0.4, in Lyapunov times \citep{vlachas}. Normalised
+error first crosses __THRESH__, in Lyapunov times \citep{vlachas}. Normalised
 error over the full 5 Lyapunov time horizon. Divergence, the fraction of
-rollouts that leave the training range. One Lyapunov time is 110.4 steps.
+rollouts that leave the training range. One Lyapunov time is __SPL__ steps.
 
-\paragraph{Protocol.} Every model gets 124,482 trainable parameters, matched
-by bisecting the baseline hidden width, which lands within 0.36\% . Every
-parameter group gets 60 passes over its own training data. Epochs are
+\paragraph{Protocol.} Every model gets __TARGET__ trainable parameters, matched
+by bisecting the baseline hidden width, which lands within __PCTOFF__\% . Every
+parameter group gets __EPOCHS__ passes over its own training data. Epochs are
 used instead of wall clock because epoch counts reproduce on any machine and
 wall clock does not. Three seeds where stated. Baselines are the weighted loss
 autoencoder plus GRU swept over $\phi$, a sigmoid bounded shared latent control
@@ -162,11 +247,11 @@ the exact Lorenz equations.
 \begin{table}[t]
 \caption{Held out results, sorted by forecast horizon. Lower is better for
 reconstruction MSE, error at 5 LT and divergence. Higher is better for VPT.
-Every trained row has 124,482 parameters and 60 epochs per parameter
+Every trained row has __TARGET__ parameters and __EPOCHS__ epochs per parameter
 group. The $\times$floor column is reconstruction MSE divided by the measured
 noise floor. MAE and ACC horizon come from the long horizon pass described in
 Section~\ref{sec:skill}. ACC horizon is the lead time at which anomaly
-correlation drops below 0.6.}
+correlation drops below __ACCT__.}
 \label{tab:main}
 \centering
 \scriptsize
@@ -176,19 +261,7 @@ correlation drops below 0.6.}
 model & seeds & recon MSE & $\times$floor & VPT (LT) & err @ 5LT & diverg.
 & MAE @ 1LT & ACC hor. \\
 \midrule
-\textbf{Ours (three-phase)} & 3 & 0.00252 & 1.012 & 1.803\,$\pm$\,0.073 & 0.822 & 0.0\% & 0.151 & 2.99 \\
-Ours (one-stage) & 1 & 0.00253 & 1.016 & 1.114 & 0.971 & 0.0\% & 0.212 & 2.45 \\
-\midrule
-$\phi$=0.1 & 3 & 0.00160 & 0.643 & 0.619\,$\pm$\,0.009 & 1.195 & 1.0\% & 0.590 & 1.18 \\
-$\phi$=0.5 & 3 & 0.00217 & 0.871 & 0.444\,$\pm$\,0.051 & 5.957 & 99.0\% & 1.120 & 0.72 \\
-$\phi$=0.25 & 3 & 0.00188 & 0.753 & 0.441\,$\pm$\,0.028 & 2.052 & 27.6\% & 1.015 & 0.72 \\
-AEGRU+sigmoid (D) & 3 & 0.00227 & 0.910 & 0.420\,$\pm$\,0.015 & 1.236 & 2.6\% & 1.054 & 0.72 \\
-PINN (true physics) & 3 & 0.00419 & 1.682 & 0.405\,$\pm$\,0.004 & 1.145 & 18.8\% & 0.516 & 1.18 \\
-$\phi$=1 & 1 & 0.00372 & 1.492 & 0.371 & 4.995 & 100.0\% & 1.185 & 0.54 \\
-$\phi$=0 & 1 & 0.00135 & 0.543 & 0.018 & 94.916 & 100.0\% & 21.920 & 0.09 \\
-\midrule
-persistence & -- & -- & -- & 0.036 & 1.369 & 0.0\% & 1.354 & 0.18 \\
-climatology & -- & -- & -- & 0.000 & 1.002 & 0.0\% & 0.862 & 0.00 \\
+__TABLE__
 \bottomrule
 \end{tabular}
 \end{table}
@@ -209,40 +282,40 @@ stays under climatology across the whole horizon.}
 \end{figure}
 
 \paragraph{The forecast gap is large.}
-Our split reaches VPT 1.803 Lyapunov times, 199 steps, against
-0.619 for the best knob setting at $\phi$=0.1, so 2.91 times longer.
+Our split reaches VPT __VPT__ Lyapunov times, __VPTSTEPS__ steps, against
+__RIVVPT__ for the best knob setting at $\phi$=0.1, so __VPTX__ times longer.
 Turning the knob does not close the gap, because VPT peaks at $\phi$=0.1 and
-then falls. At 5 Lyapunov times ours reports 0.822 against 1.002 for
+then falls. At 5 Lyapunov times ours reports __N5__ against __CLIM5__ for
 climatology, and no baseline in the study beats predicting the mean at all.
 
 \paragraph{What the architecture buys and what the schedule buys.}
-The same six modules trained end to end in one stage reach VPT 1.114 against
-1.803, so the schedule is worth 1.62 times on horizon. It buys nothing on
-reconstruction (1.016 against 1.012 times the floor) or on stability
-(both 0\%), which the architecture already supplies. Both ingredients
+The same six modules trained end to end in one stage reach VPT __OJVPT__ against
+__VPT__, so the schedule is worth __OJX__ times on horizon. It buys nothing on
+reconstruction (__OJFLOOR__ against __FLOORX__ times the floor) or on stability
+(both __DIV__\%), which the architecture already supplies. Both ingredients
 matter, because the one stage run alone beats the best knob setting by
-1.80 times.
+__OJVSPHI__ times.
 
 \paragraph{Forecast skill agrees with VPT, on a different axis.}
 \label{sec:skill}
 VPT reads one error threshold, so we also profiled MAE, anomaly correlation
 (ACC), skill against persistence and forecast variance out to 50 Lyapunov times
-(Appendix~\ref{app:profile}). At one Lyapunov time ours reports MAE 0.151
-against 0.516 for the best baseline, and ACC stays above 0.6 out to
-2.99 Lyapunov times against 1.18, a factor of 2.54. ACC scores
+(Appendix~\ref{app:profile}). At one Lyapunov time ours reports MAE __MAE1__
+against __MAE1R__ for the best baseline, and ACC stays above __ACCT__ out to
+__ACCH__ Lyapunov times against __ACCHR__, a factor of __ACCHX__. ACC scores
 whether the pattern is right and VPT whether the error is small, so this is an
-independent check. Ours also holds variance ratio 1.036 at 50 Lyapunov times
-while 6 knob settings blow past twice the true variance.
+independent check. Ours also holds variance ratio __VR50__ at 50 Lyapunov times
+while __NEXPL__ knob settings blow past twice the true variance.
 
 \paragraph{Stability is a guarantee, not a tuning result.}
-Over 5,500 free running steps no entry of $C$ ever leaves $[0,1]$ while
-$\lvert b \rvert$ reaches 11.5, which is the bounded carrier doing what the
-construction promises. Attractor fidelity agrees, with Wasserstein 0.0302
-against 0.0566 for the PINN and 1.095 for $\phi$=0.1.
+Over __CSTEPS__ free running steps no entry of $C$ ever leaves $[0,1]$ while
+$\lvert b \rvert$ reaches __BMAX__, which is the bounded carrier doing what the
+construction promises. Attractor fidelity agrees, with Wasserstein __WOURS__
+against __WPINN__ for the PINN and __WPHI__ for $\phi$=0.1.
 
 \section{Why some baselines land under the noise floor}
 
-7 of the trained baselines reconstruct \emph{below} the measured noise
+__NBELOW__ of the trained baselines reconstruct \emph{below} the measured noise
 floor. That looks impossible, but it is not. The floor is the MSE you get by
 outputting the clean signal, while reconstruction is scored as
 $\mathrm{MSE}(\hat{x}, x)$ where $x$ is the \emph{noisy} observation and the
@@ -258,42 +331,42 @@ through instead of discarding them, so the achievable minimum is
 \end{equation}
 not the floor itself. Figure~\ref{fig:capacity} in the appendix checks this
 against optimal linear rank $d$ reconstruction of the same held out windows. At
-the baseline latent width $d$=16 the measured value is 0.466 against a
-predicted 0.467.
+the baseline latent width $d$=16 the measured value is __PCA16__ against a
+predicted __PCA16P__.
 
 We measure the copying directly. Perturb the input a little and see how much
 survives to the output. A pure identity gives 1, a rank $d$ projection gives
 $d/n$, and a model passing only the signal gives $k/n$. At $\phi$=0 we measure
-0.517 against 0.533 for a rank 16 copy, while ours measures 0.113
-against 0.100 for a pure denoiser.
+__PT0__ against __PT0P__ for a rank 16 copy, while ours measures __PTOURS__
+against __PTOURSP__ for a pure denoiser.
 
 Two things follow. First, the reconstruction column is not comparable across
 bottleneck widths, because wide models have a lower achievable floor. Normalised
-by each model's own bound, ours is best of the trained models at 1.125
-against 1.165 (Table~\ref{tab:capacity}). Second, copying and forecasting
-conflict. Passthrough falls from 0.517 at $\phi$=0 to 0.116 at $\phi$=0.5
-and 0.097 at $\phi$=1, and $\phi$=0, which copies most and looks best on
-reconstruction, is the worst forecaster in the study at VPT 0.018 with
-100\% divergence. The reconstruction win and the forecast collapse are
+by each model's own bound, ours is best of the trained models at __OWNOPT__
+against __RIVOWN__ (Table~\ref{tab:capacity}). Second, copying and forecasting
+conflict. Passthrough falls from __PT0__ at $\phi$=0 to __PT05__ at $\phi$=0.5
+and __PT1__ at $\phi$=1, and $\phi$=0, which copies most and looks best on
+reconstruction, is the worst forecaster in the study at VPT __PHI0VPT__ with
+__PHI0DIV__\% divergence. The reconstruction win and the forecast collapse are
 one fact measured twice.
 
 \section{Limitations}
 
 \textbf{One system.} Lorenz-63, one lift, one noise level. \textbf{Uneven
-budget.} $m$ and $D$ train in two phases and see 120 passes against
-60, and the one stage ablation gets 60 epochs against three
-phases of 60, so part of the schedule gap may be compute.
+budget.} $m$ and $D$ train in two phases and see __EPOCHS2__ passes against
+__EPOCHS__, and the one stage ablation gets __EPOCHS__ epochs against three
+phases of __EPOCHS__, so part of the schedule gap may be compute.
 \textbf{Uneven seeds.} Single seed rows report zero spread. \textbf{Constructed
 baselines.} The $\phi$ sweep and the sigmoid control are the balancing recipe in
 its plainest form, not named methods. \textbf{Fixed capacity.} The bounded
-carrier is a fixed 8$\times$8 grid we never varied.
+carrier is a fixed __A__$\times$__B__ grid we never varied.
 
 \section{Conclusion}
 
 At matched parameters, matched epochs and matched seeds, separating a bounded
 decoder facing carrier from an unbounded forecaster facing one reaches an
-operating point no setting of the weighted loss knob reaches: 2.91 times its
-forecast horizon, reconstruction at 1.012 times the noise floor, and no
+operating point no setting of the weighted loss knob reaches: __VPTX__ times its
+forecast horizon, reconstruction at __FLOORX__ times the noise floor, and no
 rollout leaving the training range. Read together with the copying result, the
 tradeoff looks less like a frontier and more like a symptom of asking one
 carrier to do two jobs.
@@ -394,8 +467,8 @@ $d$ dimensional bottleneck has achievable minimum $(n-d)/n$ times the floor
 rather than the floor itself. Table~\ref{tab:capacity} divides each model's
 score by its own bound. On this view ours is the best of the trained models. The
 capacity matched diagnostic, a $\phi$=0 baseline with its latent cut from 16 to
-3, is included to show that the effect tracks width and not architecture. It
-lands at 1.058 times its own optimum, which is close to ours, and its
+__K__, is included to show that the effect tracks width and not architecture. It
+lands at __DIAGOWN__ times its own optimum, which is close to ours, and its
 forecast collapses in exactly the way $\phi$=0 does.
 
 \begin{figure}[H]
@@ -406,7 +479,7 @@ tracks the capacity bound $(n-d)/n$ almost exactly, and sits far under the
 noise floor for any wide bottleneck. Right: measured passthrough, the fraction
 of a random input perturbation that survives to the output. $\phi$=0 behaves
 like a rank 16 copy of its input. Ours sits at the pure denoiser value, because
-a 3 dimensional carrier has no spare width to copy with.}
+a __K__ dimensional carrier has no spare width to copy with.}
 \label{fig:capacity}
 \end{figure}
 
@@ -420,19 +493,7 @@ bottleneck width. The bound column is $(n-d)/n$.}
 \toprule
 model & $d$ & $\times$floor & bound & $\times$ own optimum \\
 \midrule
-$\phi$=0, latent=3 & 3 & 0.952 & 0.900 & 1.058 \\
-\textbf{Ours} & 3 & 1.012 & 0.900 & 1.125 \\
-$\phi$=0 & 16 & 0.543 & 0.467 & 1.165 \\
-$\phi$=0.1 & 16 & 0.643 & 0.467 & 1.377 \\
-$\phi$=0.25 & 16 & 0.753 & 0.467 & 1.614 \\
-$\phi$=0.5 & 16 & 0.871 & 0.467 & 1.867 \\
-PINN (true physics) & 3 & 1.682 & 0.900 & 1.869 \\
-AEGRU+sigmoid & 16 & 0.910 & 0.467 & 1.950 \\
-$\phi$=0.75 & 16 & 0.941 & 0.467 & 2.016 \\
-$\phi$=0.9 & 16 & 0.992 & 0.467 & 2.126 \\
-Ours (one-stage) & 16 & 1.016 & 0.467 & 2.178 \\
-$\phi$=1 & 16 & 1.492 & 0.467 & 3.196 \\
-PINN (rho=26) & 3 & 5.054 & 0.900 & 5.615 \\
+__CAP__
 \bottomrule
 \end{tabular}
 \end{table}
@@ -442,7 +503,7 @@ PINN (rho=26) & 3 & 5.054 & 0.900 & 5.615 \\
 Passthrough is measured by perturbing the input with small isotropic noise and
 recording the fraction of that perturbation which survives to the output,
 averaged over 8 draws. A pure identity gives 1. A rank $d$ projection gives
-$d/n$. A model whose output depends only on the 3 dimensional signal gives
+$d/n$. A model whose output depends only on the __K__ dimensional signal gives
 $k/n$.
 
 \begin{table}[H]
@@ -454,22 +515,19 @@ $k/n$.
 \toprule
 model & $d$ & measured & rank $d$ copy & pure denoiser \\
 \midrule
-\textbf{Ours} & 3 & 0.113 & 0.100 & 0.100 \\
-$\phi$=0 & 16 & 0.517 & 0.533 & 0.100 \\
-$\phi$=0.5 & 16 & 0.116 & 0.533 & 0.100 \\
-$\phi$=1 & 16 & 0.097 & 0.533 & 0.100 \\
+__PTT__
 \bottomrule
 \end{tabular}
 \end{table}
 
 \section{Long horizon attractor statistics}
 
-Free running for 5,500 steps, which is 50 Lyapunov times, on
-64 held out windows. Wasserstein distance is averaged over the observed
+Free running for __CSTEPS__ steps, which is __CLT__ Lyapunov times, on
+__CROLL__ held out windows. Wasserstein distance is averaged over the observed
 channels and the max column is the worst channel.
 
 \begin{table}[H]
-\caption{Attractor fidelity at 50 Lyapunov times.}
+\caption{Attractor fidelity at __CLT__ Lyapunov times.}
 \label{tab:climate}
 \centering
 \small
@@ -477,21 +535,7 @@ channels and the max column is the worst channel.
 \toprule
 model & Wasserstein & worst channel & log spectrum error \\
 \midrule
-\textbf{Ours} & 0.0302 & 0.0513 & 2.135 \\
-$\phi$=0 & 671.3238 & 1804.0989 & 10.853 \\
-$\phi$=0.1 & 1.0948 & 1.5373 & 2.615 \\
-$\phi$=0.25 & 51.8543 & 93.0053 & 7.106 \\
-$\phi$=0.5 & 68.8035 & 110.5312 & 6.890 \\
-$\phi$=0.75 & 69.4604 & 106.9682 & 6.872 \\
-$\phi$=0.9 & 68.1392 & 103.4794 & 6.821 \\
-$\phi$=1 & 63.8754 & 80.8080 & 6.696 \\
-AEGRU+sigmoid & 0.5898 & 0.9128 & 3.142 \\
-PINN (true physics) & 0.0566 & 0.1059 & 1.977 \\
-PINN (rho=26) & 0.1058 & 0.2487 & 1.808 \\
-Ours (one-stage) & 0.0770 & 0.1169 & 2.038 \\
-$\phi$=0, latent=3 & 121.9196 & 353.8474 & 6.646 \\
-persistence & 0.1823 & 0.2906 & 31.344 \\
-climatology & 0.8458 & 0.9088 & 31.357 \\
+__CLIMT__
 \bottomrule
 \end{tabular}
 \end{table}
@@ -499,7 +543,7 @@ climatology & 0.8458 & 0.9088 & 31.357 \\
 \section{Full lead time profile}
 \label{app:profile}
 
-Free running for 5,500 steps on 64 held out windows, scored at seven
+Free running for __CSTEPS__ steps on __CROLL__ held out windows, scored at seven
 lead times. MAE is in standardised observation units. ACC is anomaly correlation
 against the training climatology, where 1 is perfect and 0 is no better than
 predicting the mean. Skill is measured against persistence, so 0 means no better
@@ -508,7 +552,7 @@ forecast standard deviation over true standard deviation, so 1 is the right
 amplitude, below 1 is collapsing toward the mean and above 1 is blowing up.
 
 The variance ratio is worth reading alongside divergence, because the two
-disagree in an informative way. $\phi$=0.1 holds amplitude 1.116 at 50
+disagree in an informative way. $\phi$=0.1 holds amplitude __VR50R__ at 50
 Lyapunov times and never leaves the training range, yet it scores worst of all
 on attractor fidelity. It neither collapses nor explodes. It simply
 decorrelates, which is a failure only ACC and the attractor statistics can see.
@@ -517,7 +561,7 @@ decorrelates, which is a failure only ACC and the attractor statistics can see.
 \centering
 \includegraphics[width=\textwidth]{figs/paper_profile.png}
 \caption{Lead time profile for a representative subset. Ours is the only model
-whose anomaly correlation is still above 0.6 past one Lyapunov time, and it
+whose anomaly correlation is still above __ACCT__ past one Lyapunov time, and it
 holds the right variance for the whole run while $\phi$=0.5 grows past
 $100\times$ the true amplitude.}
 \label{fig:profile}
@@ -530,22 +574,9 @@ $100\times$ the true amplitude.}
 \setlength{\tabcolsep}{4pt}
 \begin{tabular}{lccccccc}
 \toprule
-model & 0.5 & 1 & 2 & 5 & 10 & 25 & 50 \\
+model & __LEADHDR__ \\
 \midrule
-\textbf{Ours} & 0.067 & 0.151 & 0.352 & 0.963 & 1.007 & 1.159 & 1.135 \\
-$\phi$=0 & 9.583 & 21.920 & 48.390 & 130.782 & 267.229 & 676.615 & 1345.309 \\
-$\phi$=0.1 & 0.207 & 0.590 & 1.102 & 1.183 & 1.118 & 1.152 & 1.223 \\
-$\phi$=0.25 & 0.387 & 1.015 & 1.318 & 2.530 & 6.898 & 42.170 & 145.840 \\
-$\phi$=0.5 & 0.410 & 1.120 & 2.069 & 9.734 & 25.594 & 63.008 & 154.900 \\
-$\phi$=0.75 & 0.477 & 1.102 & 2.217 & 7.634 & 20.706 & 68.241 & 156.402 \\
-$\phi$=0.9 & 0.612 & 1.010 & 1.830 & 6.855 & 20.179 & 67.228 & 149.962 \\
-$\phi$=1 & 0.663 & 1.185 & 1.946 & 7.039 & 20.577 & 63.528 & 138.395 \\
-AEGRU+sigmoid & 0.339 & 1.054 & 1.138 & 1.084 & 1.078 & 1.126 & 1.118 \\
-PINN & 0.323 & 0.516 & 0.946 & 1.180 & 1.067 & 1.174 & 1.094 \\
-PINN ($\rho$=26) & 0.663 & 0.770 & 1.062 & 1.068 & 1.137 & 1.142 & 1.239 \\
-$\phi$=0, lat.\ 3 & 1.210 & 2.268 & 7.751 & 26.024 & 53.691 & 124.045 & 238.806 \\
-persistence & 1.199 & 1.354 & 0.949 & 1.211 & 1.248 & 1.188 & 1.121 \\
-climatology & 0.858 & 0.862 & 0.838 & 0.851 & 0.831 & 0.837 & 0.830 \\
+__PROF_MAE__
 \bottomrule
 \end{tabular}
 \end{table}
@@ -557,22 +588,9 @@ climatology & 0.858 & 0.862 & 0.838 & 0.851 & 0.831 & 0.837 & 0.830 \\
 \setlength{\tabcolsep}{4pt}
 \begin{tabular}{lccccccc}
 \toprule
-model & 0.5 & 1 & 2 & 5 & 10 & 25 & 50 \\
+model & __LEADHDR__ \\
 \midrule
-\textbf{Ours} & 0.995 & 0.938 & 0.770 & 0.226 & 0.163 & -0.028 & 0.012 \\
-$\phi$=0 & 0.025 & -0.011 & -0.011 & -0.009 & 0.007 & 0.009 & -0.075 \\
-$\phi$=0.1 & 0.938 & 0.666 & 0.009 & 0.003 & 0.135 & 0.068 & 0.005 \\
-$\phi$=0.25 & 0.818 & 0.234 & -0.108 & -0.018 & -0.074 & -0.027 & -0.059 \\
-$\phi$=0.5 & 0.818 & 0.179 & -0.128 & -0.014 & -0.032 & 0.068 & -0.083 \\
-$\phi$=0.75 & 0.774 & 0.121 & 0.047 & 0.065 & 0.085 & 0.044 & -0.025 \\
-$\phi$=0.9 & 0.677 & 0.161 & 0.031 & -0.007 & -0.116 & 0.036 & 0.037 \\
-$\phi$=1 & 0.608 & -0.024 & -0.000 & 0.031 & -0.018 & 0.051 & 0.070 \\
-AEGRU+sigmoid & 0.890 & 0.085 & -0.002 & 0.046 & 0.025 & -0.073 & -0.038 \\
-PINN & 0.826 & 0.685 & 0.155 & -0.076 & 0.084 & -0.075 & -0.034 \\
-PINN ($\rho$=26) & 0.516 & 0.426 & 0.075 & 0.070 & -0.030 & 0.039 & -0.181 \\
-$\phi$=0, lat.\ 3 & 0.000 & 0.006 & -0.070 & 0.012 & 0.096 & 0.009 & 0.048 \\
-persistence & -0.048 & -0.216 & 0.269 & -0.030 & -0.105 & -0.043 & 0.054 \\
-climatology & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 \\
+__PROF_ACC__
 \bottomrule
 \end{tabular}
 \end{table}
@@ -585,22 +603,9 @@ the forecast has left the attractor entirely.}
 \setlength{\tabcolsep}{4pt}
 \begin{tabular}{lccccccc}
 \toprule
-model & 0.5 & 1 & 2 & 5 & 10 & 25 & 50 \\
+model & __LEADHDR__ \\
 \midrule
-\textbf{Ours} & 1.00 & 0.95 & 0.70 & 0.27 & 0.28 & 0.06 & -0.02 \\
-$\phi$=0 & -65.08 & -290.19 & -2438.85 & -12277.46 & -50560.65 & -346024.43 & -1520453.07 \\
-$\phi$=0.1 & 0.94 & 0.73 & -0.29 & -0.01 & 0.15 & 0.03 & -0.15 \\
-$\phi$=0.25 & 0.83 & 0.34 & -0.71 & -10.60 & -168.53 & -3437.71 & -32478.57 \\
-$\phi$=0.5 & 0.82 & 0.16 & -3.74 & -77.74 & -523.31 & -3234.92 & -21936.63 \\
-$\phi$=0.75 & 0.79 & 0.20 & -5.41 & -59.98 & -368.09 & -3887.38 & -23140.92 \\
-$\phi$=0.9 & 0.72 & 0.39 & -2.61 & -39.15 & -344.46 & -3921.71 & -21488.58 \\
-$\phi$=1 & 0.67 & 0.22 & -3.68 & -44.36 & -347.72 & -3289.58 & -18210.52 \\
-AEGRU+sigmoid & 0.90 & 0.27 & -0.33 & 0.16 & 0.22 & 0.09 & 0.03 \\
-PINN & 0.83 & 0.75 & -0.11 & -0.03 & 0.22 & -0.01 & 0.04 \\
-PINN ($\rho$=26) & 0.55 & 0.54 & -0.18 & 0.16 & 0.10 & 0.07 & -0.16 \\
-$\phi$=0, lat.\ 3 & -0.32 & -2.97 & -58.98 & -417.12 & -1718.93 & -11378.65 & -52418.89 \\
-persistence & 0.00 & 0.00 & 0.00 & 0.00 & 0.00 & 0.00 & 0.00 \\
-climatology & 0.53 & 0.59 & 0.35 & 0.52 & 0.57 & 0.55 & 0.50 \\
+__PROF_SS__
 \bottomrule
 \end{tabular}
 \end{table}
@@ -612,22 +617,9 @@ climatology & 0.53 & 0.59 & 0.35 & 0.52 & 0.57 & 0.55 & 0.50 \\
 \setlength{\tabcolsep}{4pt}
 \begin{tabular}{lccccccc}
 \toprule
-model & 0.5 & 1 & 2 & 5 & 10 & 25 & 50 \\
+model & __LEADHDR__ \\
 \midrule
-\textbf{Ours} & 1.003 & 0.981 & 0.989 & 0.982 & 1.003 & 1.010 & 1.036 \\
-$\phi$=0 & 11.706 & 26.214 & 59.911 & 157.045 & 336.946 & 857.199 & 1714.307 \\
-$\phi$=0.1 & 0.999 & 1.010 & 0.987 & 1.034 & 1.106 & 1.109 & 1.116 \\
-$\phi$=0.25 & 1.015 & 1.052 & 1.160 & 4.798 & 19.766 & 86.891 & 254.878 \\
-$\phi$=0.5 & 1.044 & 1.225 & 2.360 & 12.728 & 34.817 & 84.136 & 208.598 \\
-$\phi$=0.75 & 1.006 & 1.099 & 3.003 & 11.289 & 29.311 & 92.334 & 215.395 \\
-$\phi$=0.9 & 0.931 & 0.881 & 2.156 & 9.097 & 28.235 & 92.871 & 207.568 \\
-$\phi$=1 & 0.893 & 0.939 & 2.475 & 9.698 & 28.398 & 85.149 & 191.416 \\
-AEGRU+sigmoid & 0.972 & 0.979 & 1.014 & 0.914 & 0.927 & 0.926 & 0.936 \\
-PINN & 1.027 & 0.974 & 1.004 & 0.998 & 0.992 & 1.030 & 0.936 \\
-PINN ($\rho$=26) & 0.992 & 0.980 & 0.975 & 0.945 & 1.019 & 1.061 & 0.987 \\
-$\phi$=0, lat.\ 3 & 1.331 & 2.937 & 9.449 & 29.534 & 63.396 & 158.084 & 323.448 \\
-persistence & 1.023 & 1.010 & 1.044 & 1.014 & 1.053 & 1.054 & 1.061 \\
-climatology & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 \\
+__PROF_VR__
 \bottomrule
 \end{tabular}
 \end{table}
@@ -635,11 +627,87 @@ climatology & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 \\
 \section{Reproducibility}
 
 All numbers in this paper are produced by code from saved checkpoints, including
-every ratio quoted in the text. The three phase schedule runs 60 epochs
-per phase on 3 seeds. Phase 1 takes 58 seconds, phase 2 takes
-945 seconds and phase 3 takes 523 seconds on a single desktop CPU with 8
-threads. Metrics are snapshotted at epochs 5, 10, 20, 40, 60 so the whole compute
+every ratio quoted in the text. The three phase schedule runs __EPOCHS__ epochs
+per phase on __NSEEDS__ seeds. Phase 1 takes __T1__ seconds, phase 2 takes
+__T2__ seconds and phase 3 takes __T3__ seconds on a single desktop CPU with 8
+threads. Metrics are snapshotted at epochs __MARKS__ so the whole compute
 scaling curve comes from one run rather than from separate runs at different
 budgets.
 
 \end{document}
+"""
+
+pt_ours = PT["Ours (three-phase)"]
+O_VPT = R["Ours (three-phase)"]["vpt"]
+sub = {
+    "__NOBS__": str(D["n_obs"]), "__K__": str(D["k"]),
+    "__A__": str(D["grid"][0]), "__B__": str(D["grid"][1]),
+    "__DT__": f"{D['dt']}",
+    "__NSER__": str(D["n_train_series"]), "__NSTEPS__": f"{20000:,}",
+    "__POOLED__": f"{D['pooled_train_steps']:,}", "__NHOLD__": str(D["holdout_shape"][0]),
+    "__FLOOR__": f"{FLOOR:.6f}", "__THRESH__": f(D["threshold"], 1),
+    "__SPL__": f(D["steps_per_lyapunov"], 1),
+    "__TARGET__": f"{P['target']:,}", "__PCTOFF__": f(Rt["param_match"]["max_abs_pct_off"], 2),
+    "__EPOCHS__": "60", "__EPOCHS2__": "120", "__NSEEDS__": "3",
+    "__VPT__": f(Rt["ours_vpt"], 3), "__VPTSTEPS__": f"{Rt['ours_vpt_steps']:.0f}",
+    "__RIVVPT__": f(Rt["best_rival_vpt"], 3), "__VPTX__": f(Rt["ours_vpt_over_best_rival"], 2),
+    "__N5__": f(Rt["ours_nrmse5"], 3), "__CLIM5__": f(Rt["clim_nrmse5"], 3),
+    "__N5X__": f(Rt["ours_nrmse5_over_clim"], 2),
+    "__DIV__": f"{100*Rt['ours_divergence']:.0f}",
+    "__RIVDIV__": f"{100*R['phi=0.1']['divergence']:.1f}",
+    "__FLOORX__": f(Rt["ours_over_floor"], 3),
+    "__OWNOPT__": f(Rt["ours_over_own_optimum"], 3),
+    "__RIVOWN__": f(Rt["best_recon_rival"]["over_own_optimum"], 3),
+    "__NBELOW__": str(Rt["n_models_below_floor"] - 1),
+    "__PCA16__": f(Rt["pca_check"]["16"]["measured"], 3),
+    "__PCA16P__": f(Rt["pca_check"]["16"]["predicted"], 3),
+    "__PT0__": f(PT["phi=0"]["passthrough"], 3),
+    "__PT0P__": f(16 / D["n_obs"], 3),
+    "__PT05__": f(PT["phi=0.5"]["passthrough"], 3),
+    "__PT1__": f(PT["phi=1"]["passthrough"], 3),
+    "__PTOURS__": f(pt_ours["passthrough"], 3),
+    "__PTOURSP__": f(3 / D["n_obs"], 3),
+    "__PHI0VPT__": f(R["phi=0"]["vpt"], 3),
+    "__PHI0DIV__": f"{100*R['phi=0']['divergence']:.0f}",
+    "__PINN26F__": f(R["PINN (rho=26)"]["recon_over_floor"], 2),
+    "__CSTEPS__": f"{D['climate_steps']:,}", "__CROLL__": str(D["climate_windows"][0]),
+    "__CLT__": f"{D['climate_LT']:.0f}",
+    "__CMIN__": f"{BD['C_min']:.2e}", "__CMAX__": f(BD["C_max"], 6),
+    "__BMAX__": f(BD["b_absmax"], 1),
+    "__WOURS__": f(CL["Ours (three-phase)"]["wasserstein"], 4),
+    "__WPINN__": f(CL["PINN (true physics)"]["wasserstein"], 4),
+    "__WPHI__": f(CL["phi=0.1"]["wasserstein"], 3),
+    "__DIAGOWN__": f([r for r in Rt["recon_capacity_table"]
+                      if r["model"] == "phi=0, latent=3"][0]["over_own_optimum"], 3),
+    "__T1__": f"{J['schedule']['phase1']['total_time_s']:.0f}",
+    "__T2__": f"{J['schedule']['phase2']['total_time_s']:.0f}",
+    "__T3__": f"{J['schedule']['phase3A']['total_time_s']:.0f}",
+    "__MARKS__": ", ".join(str(m) for m in J["schedule"]["phase1"]["marks"]),
+    "__TABLE__": TABLE, "__CAP__": CAP, "__PTT__": PTT, "__CLIMT__": CLIMT,
+    # -- lead time profile
+    "__ACCT__": f(ACC_T, 1),
+    "__MAE1__": f(Rt["mae1_ours"], 3),
+    "__MAE1R__": f(Rt["mae1_best_rival"]["value"], 3),
+    "__MAE1X__": f(Rt["mae1_ratio"], 2),
+    "__ACCH__": f(Rt["acc_horizon_ours"], 2),
+    "__ACCHR__": f(Rt["acc_horizon_best_rival"]["value"], 2),
+    "__ACCHX__": f(Rt["acc_horizon_ratio"], 2),
+    "__VR50__": f(Rt["varratio_ours_50"], 3),
+    "__VR50R__": f(Rt["varratio_phi01_50"], 3),
+    "__NEXPL__": str(Rt["n_exploding_50"]),
+    "__OJVPT__": f(R["Ours (one-stage)"]["vpt"], 3),
+    "__OJFLOOR__": f(R["Ours (one-stage)"]["recon_over_floor"], 3),
+    "__OJX__": f(O_VPT / R["Ours (one-stage)"]["vpt"], 2),
+    "__OJVSPHI__": f(R["Ours (one-stage)"]["vpt"] / R["phi=0.1"]["vpt"], 2),
+    "__LEADHDR__": LEADHDR,
+    "__PROF_MAE__": PROF_MAE, "__PROF_ACC__": PROF_ACC,
+    "__PROF_SS__": PROF_SS, "__PROF_VR__": PROF_VR,
+}
+for k, v in sub.items():
+    TEX = TEX.replace(k, v)
+
+assert "__" not in TEX.replace("\\_\\_", ""), [w for w in TEX.split() if "__" in w][:5]
+
+io.open("Paper/fmts2026.tex", "w", encoding="utf-8", newline="").write(TEX)
+print("wrote Paper/fmts2026.tex")
+print("em dashes:", TEX.count("---"), "| semicolons:", TEX.count(";"))
