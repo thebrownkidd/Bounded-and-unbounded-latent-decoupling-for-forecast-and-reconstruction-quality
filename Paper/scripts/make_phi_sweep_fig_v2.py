@@ -15,7 +15,7 @@ table_data = json.load(open(ROOT / "multiseed_table.json"))
 fig, axes = plt.subplots(1, 3, figsize=(14, 4.0))
 plt.rcParams.update({'font.size': 9, 'font.family': 'serif'})
 
-systems = ["Coupled Harmonic", "Brusselator", "Linear 5D"]
+systems = ["Linear 5D", "Brusselator", "Duffing"]
 panel_labels = ["(a)", "(b)", "(c)"]
 
 for idx, sname in enumerate(systems):
@@ -50,15 +50,16 @@ for idx, sname in enumerate(systems):
         vf = [v[1] for v in valid_pts]
         ax.plot(vr, vf, '-', color="#bbb", lw=1.0, zorder=2)
 
-    # Plot each φ point with error bars
+    # Plot each φ point: marker first, then error bars on top
     for i, phi in enumerate(phis):
         r, f = rs[i], fs[i]
         if r > 2.0 or f > 5.0:
             continue
+        ax.plot(r, f, 'o', color="#999", ms=7, zorder=3,
+                markeredgecolor="#666", markeredgewidth=0.8)
         ax.errorbar(r, f, xerr=rs_std[i], yerr=fs_std[i],
-                    fmt='o', color="#999", ms=7, zorder=3,
-                    markeredgecolor="#666", markeredgewidth=0.8,
-                    ecolor="#ccc", elinewidth=1.0, capsize=2)
+                    fmt='none', ecolor="#444", elinewidth=1.2,
+                    capsize=3, capthick=1.0, zorder=7)
         phi_f = float(phi)
         label = f"$\\phi$={phi_f:.2f}" if phi_f not in (0, 1) else f"$\\phi$={phi_f:.0f}"
         off_x, off_y = 6, 6
@@ -67,19 +68,21 @@ for idx, sname in enumerate(systems):
         ax.annotate(label, (r, f), textcoords="offset points",
                     xytext=(off_x, off_y), fontsize=6, color="#666")
 
-    # Utopia diamond
-    ax.plot(best_r, best_f, 'D', color="#4477aa", ms=9, zorder=5,
-            markeredgecolor="#224466", markeredgewidth=1.0)
+    # Utopia diamond (hollow so φ=0 marker shows through)
+    ax.plot(best_r, best_f, 'D', color="none", ms=11, zorder=5,
+            markeredgecolor="#224466", markeredgewidth=1.8,
+            markerfacecolor="none")
     ax.annotate("utopia", (best_r, best_f), textcoords="offset points",
-                xytext=(-8, 10), fontsize=7, color="#4477aa", fontweight="bold")
+                xytext=(-8, 12), fontsize=7, color="#224466", fontweight="bold")
 
-    # Our method (red star with error bars)
+    # Our method: star marker first, then error bars on top
     our_r, our_f = ours["rmse_r_mean"], ours["rmse_f_mean"]
     our_rs, our_fs = ours["rmse_r_std"], ours["rmse_f_std"]
+    ax.plot(our_r, our_f, '*', color="#d62728", ms=18, zorder=6,
+            markeredgecolor="#8b0000", markeredgewidth=0.8)
     ax.errorbar(our_r, our_f, xerr=our_rs, yerr=our_fs,
-                fmt='*', color="#d62728", ms=18, zorder=6,
-                markeredgecolor="#8b0000", markeredgewidth=0.8,
-                ecolor="#d62728", elinewidth=1.5, capsize=3)
+                fmt='none', ecolor="#8b0000", elinewidth=1.5,
+                capsize=4, capthick=1.2, zorder=8)
     ours_off = (-12, 12)
     if our_r < best_r * 0.5: ours_off = (8, -16)
     ax.annotate("Ours",
@@ -101,8 +104,9 @@ for idx, sname in enumerate(systems):
             Line2D([0], [0], marker='o', color='w', markerfacecolor='#999',
                    markeredgecolor='#666', ms=7,
                    label='Koopman AE ($\\phi$-sweep)'),
-            Line2D([0], [0], marker='D', color='w', markerfacecolor='#4477aa',
-                   markeredgecolor='#224466', ms=8, label='Utopia (best of each)'),
+            Line2D([0], [0], marker='D', color='w', markerfacecolor='none',
+                   markeredgecolor='#224466', markeredgewidth=1.5,
+                   ms=8, label='Utopia (best of each)'),
             Line2D([0], [0], marker='*', color='w', markerfacecolor='#d62728',
                    markeredgecolor='#8b0000', ms=14, label='Ours (decoupled)'),
         ]

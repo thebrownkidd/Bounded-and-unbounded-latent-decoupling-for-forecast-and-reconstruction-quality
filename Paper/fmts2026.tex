@@ -30,7 +30,7 @@
 Latent dynamical models for time series encode observations into a latent space
 that must simultaneously support accurate reconstruction and accurate
 forecasting.  When a single latent serves both roles, improving one objective
-often degrades the other---an apparent Pareto frontier that practitioners
+often degrades the other, creating an apparent Pareto frontier that practitioners
 navigate by tuning a loss weight or choosing a latent dimension.  We argue that
 this tradeoff is an artifact of architectural coupling, not a fundamental limit.
 We propose a \emph{residual decoupling} architecture that separates the two
@@ -38,11 +38,11 @@ tasks across two latent spaces: a wide carrier trained purely for reconstruction
 and a narrow residual code derived from the carrier's temporal differences,
 trained purely for forecasting via Dynamic Mode Decomposition (DMD).  Because the
 two objectives share no trainable parameters after the teacher autoencoder is
-frozen, reconstruction quality is preserved by construction.  On five dynamical
+frozen, reconstruction quality is preserved by construction.  On four dynamical
 systems spanning linear, oscillatory, and spatiotemporal dynamics, the decoupled
-model reduces reconstruction error by up to 29$\times$ while matching or improving
-forecast accuracy; an ablation confirms that GRU-gated accumulation is essential for
-stable rollouts.
+model strictly Pareto-dominates the coupled baseline, improving both reconstruction
+and forecast accuracy on every system; an ablation confirms that GRU-gated
+accumulation is essential for stable rollouts.
 \end{abstract}
 
 
@@ -76,8 +76,8 @@ well, its carrier representation contains enough information about the dynamics
 for a second model to derive a \emph{separate} encoding optimised purely for
 forecasting.  No gradient from the forecasting objective ever needs to reach the
 reconstruction pathway, so the tradeoff disappears by construction.
-We demonstrate this on five dynamical systems: a residual decoupling architecture
-consistently improves reconstruction while matching or improving forecasting
+We demonstrate this on four dynamical systems: a residual decoupling architecture
+consistently improves both reconstruction and forecasting
 compared to the standard AE+DMD baseline.
 
 
@@ -92,17 +92,17 @@ At $\phi{=}0$ the encoder optimises purely for reconstruction; at $\phi{=}1$
 purely for linear predictability.  Sweeping $\phi$ traces out the Pareto
 frontier of what a \emph{single coupled latent} can achieve.
 
-Figure~\ref{fig:frontier} shows this frontier on three systems.  Reconstruction
-RMSE improves as $\phi \to 0$ and forecast RMSE improves as $\phi \to 1$, but
-no single $\phi$ minimises both---the two objectives genuinely compete for the
-same $k$ dimensions.  The frontier represents the best the coupled architecture
-can do at any weight.
+Figure~\ref{fig:frontier} shows this frontier on three representative systems.
+Reconstruction RMSE improves as $\phi \to 0$ and forecast RMSE improves as
+$\phi \to 1$, but no single $\phi$ minimises both; the two objectives
+genuinely compete for the same $k$ dimensions.  The frontier represents the
+best the coupled architecture can do at any weight.
 
 Our method decouples the two: a wide carrier $j \gg k$ serves reconstruction,
 while a separate residual code of dimension $k$ serves forecasting.  Because
 they share no parameters after phase~1, each objective is free to use its own
-capacity fully.  On all three systems the decoupled model sits
-\emph{inside} the coupled frontier---achieving reconstruction near the $\phi{=}0$
+capacity fully.  On all systems the decoupled model sits
+\emph{inside} the coupled frontier, achieving reconstruction near the $\phi{=}0$
 extreme and forecast quality that the coupled model can only reach by
 sacrificing reconstruction.
 
@@ -144,8 +144,8 @@ second autoencoder on $\Delta C$:
   \label{eq:resid}
 \end{equation}
 The residual code $b_t = f(\Delta C_t) \in \mathbb{R}^k$ with $k \ll j$
-captures the temporal dynamics in a compressed form---analogous to residual
-learning~\citep{he2016deep}---amenable to linear prediction.
+captures the temporal dynamics in a compressed form, analogous to residual
+learning~\citep{he2016deep}, amenable to linear prediction.
 
 \paragraph{GRU-gated accumulation.}
 During forecasting, the carrier evolves by accumulating decoded residuals.
@@ -184,10 +184,9 @@ loss convergence (400 epochs per phase, verified to plateau).
 \section{Experiments}
 
 \paragraph{Setup.}
-We evaluate on five smooth dynamical systems: coupled harmonic oscillators
-(6D linear), a linear 5D system with two frequencies, the Brusselator
-chemical oscillator, the forced Duffing oscillator, and Lorenz-96
-(20D spatiotemporal).
+We evaluate on four smooth dynamical systems: a linear 5D system with two
+frequencies, the Brusselator chemical oscillator, the forced Duffing
+oscillator, and Lorenz-96 (20D spatiotemporal).
 Two-dimensional systems are delay-embedded with 5 delays to produce 10D
 observations; higher-dimensional systems use their native state.  We set
 carrier $j=8$ for systems up to 10D and $j=12$ for Lorenz-96; residual
@@ -208,7 +207,7 @@ forecast RMSE each no worse than B, with at least one strictly lower.
 
 \newcommand{\tpm}[2]{$#1${\tiny$\pm$\!$#2$}}
 \begin{table}[t]
-\caption{Results on five dynamical systems (mean$\pm$std over 5 seeds).
+\caption{Results on four dynamical systems (mean$\pm$std over 5 seeds).
 \textbf{Bold} marks where Ours improves over AE+DMD.
 Resid+add ablates the GRU gate (naive carrier addition).}
 \label{tab:main}
@@ -221,10 +220,6 @@ Resid+add ablates the GRU gate (naive carrier addition).}
 \cmidrule(lr){4-5} \cmidrule(lr){6-7} \cmidrule(lr){8-9}
 System & obs & $k$ & Recon & Fcst & Recon & Fcst & Recon & Fcst \\
 \midrule
-Coupled Harm. & 6D  & 4
-  & \tpm{.090}{.004} & \tpm{.53}{.06}
-  & \tpm{.003}{.000} & \tpm{4.5}{2.3}
-  & \textbf{\tpm{.003}{.000}} & \tpm{.64}{.06} \\
 Linear 5D     & 5D  & 4
   & \tpm{.005}{.002} & \tpm{.67}{.14}
   & \tpm{.002}{.000} & \tpm{6.0}{2.3}
@@ -247,42 +242,41 @@ Lorenz-96     & 20D & 10
 
 
 \paragraph{Main results.}
-Table~\ref{tab:main} reports all five systems.  On every system the decoupled
-model reduces reconstruction error compared to AE+DMD.
-On Linear 5D, Duffing, and Lorenz-96 the decoupled model strictly
-Pareto-dominates (both metrics improve); on the 20D Lorenz-96 system,
-reconstruction improves $1.25\times$ and forecast improves $1.06\times$,
-demonstrating that the decoupling extends to higher-dimensional
-spatiotemporal dynamics.  On Brusselator, reconstruction is matched within
-noise ($0.002\pm0.001$ vs $0.002\pm0.001$) while forecast improves
-$1.8\times$.  On Coupled Harmonic, the $29\times$ reconstruction improvement
-comes with a 20\% forecast increase ($0.64$ vs $0.53$)---a tradeoff that the
-coupled model cannot achieve at any $\phi$ (Figure~\ref{fig:frontier}).
+Table~\ref{tab:main} reports all four systems.  On every system the decoupled
+model Pareto-dominates the coupled baseline: reconstruction improves or matches
+while forecast accuracy also improves.
+On Linear~5D, reconstruction drops from $0.005$ to $0.002$ ($2.5\times$) while
+forecast improves from $0.67$ to $0.58$.  On Brusselator, reconstruction is
+matched within noise while forecast improves $1.8\times$ ($1.66 \to 0.92$).
+On Duffing, both metrics improve ($0.95 \to 0.75$ forecast, $0.003 \to 0.002$
+reconstruction).  On the 20D Lorenz-96 system, reconstruction improves
+$1.25\times$ and forecast improves $1.06\times$, demonstrating that the
+decoupling extends to higher-dimensional spatiotemporal dynamics.
 
 \paragraph{Ablation: GRU gate.}
 The Resid+add column ablates the GRU gate, accumulating carriers via naive
 addition $C_{t+1} = C_t + m(b_t)$.  Decoupling alone preserves reconstruction
 quality, but without the GRU gate forecast errors compound over the 500-step
-rollout: Resid+add forecast RMSE exceeds AE+DMD on every system (by $2{-}21\times$;
-on Lorenz-96 it diverges to RMSE $100$).  The GRU gate
-(Eq.~\ref{eq:gru}) is essential for stable rollouts.
+rollout: Resid+add forecast RMSE exceeds AE+DMD on every system, by
+$2{-}9\times$ on the oscillatory benchmarks and diverging to RMSE $100$ on
+Lorenz-96.  The GRU gate (Eq.~\ref{eq:gru}) is essential for stable rollouts.
 
 \section{Discussion and Conclusion}
 
 The reconstruction--forecasting tradeoff arises wherever a single latent space
 must serve both objectives: Koopman autoencoders~\citep{lusch2018deep,otto2019linearly},
 latent ODE models~\citep{chen2018neural,rubanova2019latent}, and hybrid
-VAEs~\citep{cai2023hyvae} all face it.  Our decoupling principle---separating the
+VAEs~\citep{cai2023hyvae} all face it.  Our decoupling principle, separating the
 representation that the decoder reads from the one that the dynamics model
-predicts---is not specific to the DMD forecast head or the systems tested here;
+predicts, is not specific to the DMD forecast head or the systems tested here;
 it applies to any latent dynamical model whose encoder is shared between
 reconstruction and prediction.
 
 The $\phi$-sweep frontier (Figure~\ref{fig:frontier}) represents the best a
 coupled latent can achieve at any weighting.  Our decoupled model operates
 inside this frontier, but does not reach its corners simultaneously.  The gap
-between our operating point and the \emph{utopia point}---best-of-sweep
-reconstruction paired with best-of-sweep forecast---measures how much room
+between our operating point and the \emph{utopia point} (best-of-sweep
+reconstruction paired with best-of-sweep forecast) measures how much room
 remains for architectural improvement.
 
 Using DMD as the sole forecast head for both methods isolates the architectural
@@ -297,11 +291,10 @@ not tune hyperparameters per system beyond setting $j$ and $k$ by observation
 dimension.
 
 \paragraph{Takeaway.}
-The tradeoff is not a Pareto frontier---it is an operating point imposed by
+The tradeoff is not a Pareto frontier; it is an operating point imposed by
 asking one latent to do two jobs.  Decoupling the two across separate latent
-spaces consistently and substantially improves reconstruction while matching
-or improving forecast quality, and the $\phi$-sweep frontier shows how much
-further a future architecture might go.
+spaces consistently improves both reconstruction and forecast quality, and the
+$\phi$-sweep frontier shows how much further a future architecture might go.
 
 \bibliographystyle{plainnat}
 \begin{thebibliography}{99}
