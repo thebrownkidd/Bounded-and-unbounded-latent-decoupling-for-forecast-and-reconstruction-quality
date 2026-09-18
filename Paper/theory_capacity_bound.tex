@@ -1,0 +1,119 @@
+% Theory §4A: Capacity Bound Proposition
+% To be integrated into the ICLR 2027 paper §3.1
+
+\subsection{Capacity Bound: Reconstruction vs.\ Prediction Projections}
+\label{sec:capacity-bound}
+
+We formalise, for linear systems, the intuition that reconstruction and
+forecasting favour \emph{different} low-dimensional projections of the
+state space.
+
+\paragraph{Setup.}
+Consider a linear dynamical system
+$\mathbf{x}_{t+1} = F\,\mathbf{x}_t + \boldsymbol{\varepsilon}_t$,
+$\boldsymbol{\varepsilon}_t \sim \mathcal{N}(\mathbf{0}, Q)$,
+with stationary covariance $\Sigma_x = \mathbb{E}[\mathbf{x}_t \mathbf{x}_t^\top]$
+satisfying the Lyapunov equation $\Sigma_x = F \Sigma_x F^\top + Q$.
+We seek a rank-$k$ orthonormal projection
+$P \in \mathbb{R}^{n \times k}$, $P^\top P = I_k$,
+with orthogonal projector $\Pi = P P^\top$.
+
+\begin{definition}[Reconstruction-optimal projection]
+$P_{\mathrm{rec}}^*$ minimises the expected reconstruction error
+\[
+  \mathcal{L}_{\mathrm{rec}}(P) \;=\;
+  \mathbb{E}\bigl[\lVert \mathbf{x} - \Pi\,\mathbf{x} \rVert^2\bigr]
+  \;=\; \operatorname{tr}\!\bigl(\Sigma_x\bigr)
+        - \operatorname{tr}\!\bigl(P^\top \Sigma_x P\bigr).
+\]
+The solution is the top-$k$ eigenvectors of $\Sigma_x$ (PCA).
+\end{definition}
+
+\begin{definition}[Prediction-optimal projection]
+$P_{\mathrm{pred}}^*$ minimises the expected one-step prediction error
+\[
+  \mathcal{L}_{\mathrm{pred}}(P) \;=\;
+  \mathbb{E}\bigl[\lVert \mathbf{x}_{t+1}
+        - \Pi\,F\,\Pi\,\mathbf{x}_t \rVert^2\bigr],
+\]
+where $\Pi F \Pi$ projects $\mathbf{x}_t$ into the $k$-dimensional
+subspace, applies the dynamics $F$, and projects the result back.
+\end{definition}
+
+\begin{proposition}[Capacity bound]
+\label{prop:capacity}
+Let $\Sigma_x$ have distinct eigenvalues.
+If $F$ and $\Sigma_x$ do not commute ($F\Sigma_x \neq \Sigma_x F$),
+then $P_{\mathrm{rec}}^*$ is not a stationary point of
+$\mathcal{L}_{\mathrm{pred}}$, and consequently no single rank-$k$
+projection simultaneously minimises both objectives.
+\end{proposition}
+
+\begin{proof}
+Write $P_{\mathrm{rec}}^* = [v_1 \mid \cdots \mid v_k]$ (top-$k$
+eigenvectors of $\Sigma_x$) and $\Pi^* = P_{\mathrm{rec}}^*
+(P_{\mathrm{rec}}^*)^\top$.
+
+Expanding $\mathcal{L}_{\mathrm{pred}}$ with
+$M = F - \Pi F \Pi$ and using the independence of
+$\boldsymbol{\varepsilon}_t$ from $\mathbf{x}_t$:
+\begin{equation}
+  \mathcal{L}_{\mathrm{pred}}(P) \;=\;
+  \operatorname{tr}\!\bigl(M^\top M\,\Sigma_x\bigr) + \operatorname{tr}(Q).
+  \label{eq:pred-expand}
+\end{equation}
+The additive $\operatorname{tr}(Q)$ is independent of $P$ and does not
+affect the optimal subspace.
+
+We show by contradiction that $P_{\mathrm{rec}}^*$ is generically
+\emph{not} a stationary point of $\mathcal{L}_{\mathrm{pred}}$.
+Consider the restricted case $n = 2$, $k = 1$, with
+$\Sigma_x = \operatorname{diag}(\lambda_1, \lambda_2)$,
+$\lambda_1 > \lambda_2 > 0$, so
+$P_{\mathrm{rec}}^* = e_1$.
+
+At $P = e_1$: $\Pi^* = e_1 e_1^\top$,
+$M^* = F - \Pi^* F \Pi^* = \begin{psmallmatrix} 0 & F_{12} \\ F_{21} & F_{22} \end{psmallmatrix}$,
+and $\mathcal{L}_{\mathrm{pred}}(e_1)
+= \lambda_1 F_{21}^2 + \lambda_2 F_{12}^2 + \lambda_2 F_{22}^2 + \operatorname{tr}(Q)$.
+
+At $P = e_2$: $M = \begin{psmallmatrix} F_{11} & F_{12} \\ 0 & 0 \end{psmallmatrix}$
+and $\mathcal{L}_{\mathrm{pred}}(e_2)
+= \lambda_1 F_{11}^2 + \lambda_2 F_{12}^2 + \operatorname{tr}(Q)$.
+
+The reconstruction-optimal $e_1$ is prediction-optimal only when
+$\mathcal{L}_{\mathrm{pred}}(e_1) \leq \mathcal{L}_{\mathrm{pred}}(e_2)$,
+i.e.\ $\lambda_1 F_{21}^2 + \lambda_2 F_{22}^2 \leq \lambda_1 F_{11}^2$.
+This fails whenever the off-diagonal or lower-right entries of $F$ are
+sufficiently large, which is the generic case.
+
+For general $n$ and $k$, the same argument applies to any pair
+$(v_k, v_{k+1})$: replacing $v_k$ with $v_{k+1}$ in $P$ increases
+$\mathcal{L}_{\mathrm{rec}}$ (by $\lambda_k - \lambda_{k+1} > 0$) but
+can decrease $\mathcal{L}_{\mathrm{pred}}$ whenever $F$ couples the
+retained and excluded eigenspaces of $\Sigma_x$.  This coupling is
+absent only when $F$ commutes with $\Sigma_x$ (i.e.\ they are
+simultaneously diagonalisable), a measure-zero condition.
+
+Therefore, for generic $F$ in this linear setting, any rank-$k$
+projection must sacrifice either reconstruction fidelity (by moving
+away from $\mathcal{V}_{\mathrm{rec}}$) or prediction accuracy (by
+remaining at a non-stationary point of $\mathcal{L}_{\mathrm{pred}}$),
+or both.
+\end{proof}
+
+\paragraph{Implication for decoupling.}
+The carrier-residual architecture avoids this constraint by allocating
+\emph{separate} subspaces: a $j$-dimensional carrier $\mathbf{C}$
+optimised for reconstruction, and a $k$-dimensional residual code
+$\mathbf{b}$ optimised for dynamics.  Since $j + k$ can exceed $k$
+without increasing the \emph{dynamics} bottleneck, the architecture
+is not subject to the single-projection capacity trade-off.
+
+\paragraph{Remark.}
+While Proposition~\ref{prop:capacity} is stated for linear systems, the
+core tension (that variance-capturing and dynamics-capturing projections
+differ) extends to nonlinear systems via local linearisation
+$F \approx \nabla_{\mathbf{x}} f(\mathbf{x})$.  Our empirical gradient
+conflict measurements (Section~\ref{sec:gradient-conflict}) confirm that
+this tension persists in the nonlinear, neural-network setting.
