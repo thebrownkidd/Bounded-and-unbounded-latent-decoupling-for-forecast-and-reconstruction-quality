@@ -17,3 +17,11 @@ Paper/*.synctex.gz
 *.json
 *.png
 Experimentation\LatentForecastComparisonMultiSeries.ipynb
+
+# Submission build artifacts (regenerable from Paper/ sources)
+/iclr2027.pdf
+/iclr2027_submission.zip
+/iclr2027_submission/
+Paper/iclr2027.zip
+Paper/iclr2027_template/
+submission_bundle/
