@@ -809,11 +809,28 @@ L-96     && $\mathbf{.422}$ & .541 & .423
 \paragraph{DMD under noise.}
 When spectral DMD is used for long-horizon evaluation (500-step
 rollout), observation noise biases the estimated eigenvalues and
-degrades the forecast systematically
-(Table~\ref{tab:noise-dmd}).  At $\sigma{=}0$, Decoupled's spectral
-forecast is $5$--$9\times$ lower than Coupled on the two linear-like
-systems; at $\sigma{=}0.1$ the gap narrows but Decoupled remains
-superior on three of four systems.
+degrades the forecast systematically.
+Figure~\ref{fig:noise-sweep} shows the full degradation curves:
+on Coupled Harmonic and Linear~5D, the Decoupled advantage persists
+across all noise levels, while on Brusselator and Duffing the two
+methods converge as noise dominates.
+Table~\ref{tab:noise-dmd} gives the exact numbers.
+At $\sigma{=}0$, Decoupled's spectral forecast is $5$--$9\times$
+lower than Coupled on the two linear-like systems; at $\sigma{=}0.2$
+both methods degrade but Decoupled remains superior on three of four
+systems in both reconstruction and forecast.
+
+\begin{figure}[H]
+\centering
+\includegraphics[width=\textwidth]{noise_sweep.png}
+\caption{Noise degradation curves (500-step spectral DMD rollout).
+Top: forecast RMSE; bottom: reconstruction RMSE.
+Shaded bands: $\pm$1 std over 3 seeds.  Decoupled (red) maintains
+lower error than Coupled (blue) across all noise levels on
+Coupled Harmonic and Linear~5D; the two converge on the chaotic
+systems at high noise.}
+\label{fig:noise-sweep}
+\end{figure}
 
 \begin{table}[H]
 \caption{DMD noise sensitivity: 500-step spectral rollout RMSE
@@ -821,38 +838,30 @@ superior on three of four systems.
 \label{tab:noise-dmd}
 \centering
 \small
-\setlength{\tabcolsep}{3pt}
-\begin{tabular}{l cccc cccc}
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabular}{l l ccccc}
 \toprule
-& \multicolumn{4}{c}{$\sigma=0.0$} & \multicolumn{4}{c}{$\sigma=0.1$} \\
-\cmidrule(lr){2-5}\cmidrule(lr){6-9}
-& \multicolumn{2}{c}{Coupled} & \multicolumn{2}{c}{Decoupled}
-& \multicolumn{2}{c}{Coupled} & \multicolumn{2}{c}{Decoupled} \\
-\cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}\cmidrule(lr){8-9}
-System & R & F & R & F & R & F & R & F \\
+& & $\sigma{=}0$ & $\sigma{=}0.01$ & $\sigma{=}0.05$ & $\sigma{=}0.1$ & $\sigma{=}0.2$ \\
 \midrule
-C.~Harm.
-  & .168 & .990
-  & $\mathbf{.006}$ & $\mathbf{.146}$
-  & .144 & 1.20
-  & $\mathbf{.014}$ & $\mathbf{.856}$ \\
-Lin.~5D
-  & .011 & 1.17
-  & $\mathbf{.004}$ & $\mathbf{.127}$
-  & .050 & 1.06
-  & $\mathbf{.010}$ & $\mathbf{.758}$ \\
-Bruss.
-  & $\mathbf{.002}$ & 1.00
-  & $\mathbf{.002}$ & $\mathbf{.967}$
-  & .077 & $\mathbf{1.00}$
-  & $\mathbf{.044}$ & $\mathbf{.980}$ \\
-Duffing
-  & .005 & 1.02
-  & $\mathbf{.005}$ & $\mathbf{.964}$
-  & .077 & $\mathbf{1.02}$
-  & $\mathbf{.045}$ & 1.03 \\
+\multirow{2}{*}{C.~Harm.}
+  & Coupled   & .990 & .988 & 1.11 & 1.20 & 1.42 \\
+  & Decoupled & $\mathbf{.146}$ & $\mathbf{.153}$ & $\mathbf{.518}$ & $\mathbf{.856}$ & $\mathbf{.988}$ \\
+\addlinespace
+\multirow{2}{*}{Lin.~5D}
+  & Coupled   & 1.17 & 1.10 & 1.01 & 1.06 & 1.11 \\
+  & Decoupled & $\mathbf{.127}$ & $\mathbf{.128}$ & $\mathbf{.402}$ & $\mathbf{.758}$ & $\mathbf{.884}$ \\
+\addlinespace
+\multirow{2}{*}{Bruss.}
+  & Coupled   & 1.00 & $\mathbf{.997}$ & $\mathbf{.971}$ & $\mathbf{.996}$ & 1.05 \\
+  & Decoupled & $\mathbf{.967}$ & $\mathbf{.862}$ & .967 & .980 & $\mathbf{.995}$ \\
+\addlinespace
+\multirow{2}{*}{Duffing}
+  & Coupled   & 1.02 & 1.01 & 1.00 & $\mathbf{1.02}$ & $\mathbf{1.02}$ \\
+  & Decoupled & $\mathbf{.964}$ & $\mathbf{.963}$ & $\mathbf{.957}$ & 1.03 & 1.07 \\
 \bottomrule
 \end{tabular}
+\\[4pt]
+{\footnotesize Forecast RMSE only; reconstruction RMSE visible in Figure~\ref{fig:noise-sweep}.}
 \end{table}
 
 
